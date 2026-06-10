@@ -572,8 +572,9 @@ function enemyTurn(){
     }
     const at=atkTargets(e);
     if(at.length){
-      let best=at[0],bm=facingMult(e,at[0]);
-      for(const t of at){const m=facingMult(e,t);if(m>bm){bm=m;best=t;}}
+      // 防御減衰が最小（背後寄り）の相手を狙う
+      let best=at[0],bm=facingDecay(e,at[0]);
+      for(const t of at){const m=facingDecay(e,t);if(m<bm){bm=m;best=t;}}
       doAtk(e,best);chkVic();continue;
     }
     const mv=reachable(e);
