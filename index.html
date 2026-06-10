@@ -322,19 +322,39 @@ function mkUnit(gx,gz,type,side,facing){
 }
 
 function placeUnits(){
-  const types=['HONJIN','HATAMOTO','CAVALRY','RIFLE','BOW','INFANTRY','INFANTRY','INFANTRY','RABBLE','RABBLE'];
+  // 陣形（前方=敵側を向いた攻撃方向, 横列で固める）
+  // dx: 前後（+が前線寄り）, dz: 左右
+  const FORMATION = [
+    {t:'INFANTRY', dx: 2, dz:-2}, {t:'INFANTRY', dx: 2, dz: 0}, {t:'INFANTRY', dx: 2, dz: 2}, // 前衛: 足軽横列
+    {t:'RIFLE',    dx: 1, dz:-1}, {t:'BOW',      dx: 1, dz: 1},                                 // 中衛: 飛び道具
+    {t:'CAVALRY',  dx: 1, dz:-3}, {t:'RABBLE',   dx: 1, dz: 3},                                 // 両翼
+    {t:'HATAMOTO', dx: 0, dz: 0},                                                                // 旗本
+    {t:'HONJIN',   dx:-1, dz: 0},                                                                // 本陣（最後方）
+    {t:'RABBLE',   dx:-1, dz: 2},                                                                // 予備
+  ];
   const used=new Set();
-  function rnd(x0,x1,z0,z1){
-    for(let i=0;i<300;i++){
-      const x=x0+Math.floor(Math.random()*(x1-x0));
-      const z=z0+Math.floor(Math.random()*(z1-z0));
-      const k=x+','+z;
-      if(!used.has(k)&&terrain[z][x]!=='RIVER'){used.add(k);return{x,z};}
+  // anchor を中心に陣形配置。川なら近くにずらす
+  function place(anchorX, anchorZ, side, facing, fwd){
+    for(const f of FORMATION){
+      let x=anchorX+f.dx*fwd, z=anchorZ+f.dz;
+      // 川・重複なら近傍を探す
+      let fx=x, fz=z, found=false;
+      outer:
+      for(let r2=0;r2<5&&!found;r2++){
+        for(let ddx=-r2;ddx<=r2;ddx++) for(let ddz=-r2;ddz<=r2;ddz++){
+          const nx=Math.max(0,Math.min(GW-1,x+ddx));
+          const nz=Math.max(0,Math.min(GH-1,z+ddz));
+          if(!used.has(nx+','+nz)&&terrain[nz][nx]!=='RIVER'){
+            fx=nx; fz=nz; found=true; break outer;
+          }
+        }
+      }
+      used.add(fx+','+fz);
+      mkUnit(fx,fz,f.t,side,facing);
     }
-    return{x:x0,z:z0};
   }
-  types.forEach(t=>{const p=rnd(2,10,4,28);mkUnit(p.x,p.z,t,'player',2);});
-  types.forEach(t=>{const p=rnd(22,30,4,28);mkUnit(p.x,p.z,t,'enemy',6);});
+  place(6,  GH/2, 'player', 2,  1);  // 左側・東向き
+  place(25, GH/2, 'enemy',  6, -1);  // 右側・西向き
 }
 
 // ── 経路・範囲 ──
