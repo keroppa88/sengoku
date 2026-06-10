@@ -421,8 +421,8 @@ function doAtk(att, def, isRanged){
   }
   let atkPow = rawAtk * terrAtkM * alt * distM * (0.85+Math.random()*0.3);
 
-  // 防御力（地形 × 方向減衰 × 防御態勢）
-  const decay  = isRanged ? 1.0 : facingDecay(att, def);
+  // 防御力（地形 × 方向減衰 × 防御態勢）— 射撃にも方向減衰を適用
+  const decay  = facingDecay(att, def);
   const stance = def.defending ? 2.0 : 1.0;
   const defPow = dd.def * tDef.defM * decay * stance;
 
@@ -432,10 +432,8 @@ function doAtk(att, def, isRanged){
   def.morale= Math.max(0, def.morale - Math.floor(dmg*0.25));
 
   const tags=[];
-  if(!isRanged){
-    if(decay<0.4) tags.push('背後攻撃');
-    else if(decay<0.8) tags.push('側面攻撃');
-  }
+  if(decay<0.4) tags.push('背後攻撃');
+  else if(decay<0.8) tags.push('側面攻撃');
   if(alt>1.1) tags.push('高地有利');
   else if(alt<0.9) tags.push('高地不利');
   const tagStr=tags.length?`【${tags.join('・')}】`:'';
