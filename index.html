@@ -1,0 +1,1101 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>戦国合戦 - 3D Turn Battle</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #1a1a2e; color: #e0d5c0; font-family: 'MS Gothic', monospace; overflow: hidden; display: flex; height: 100vh; }
+#canvas-container { flex: 1; position: relative; }
+#renderer { display: block; }
+#ui-panel {
+  width: 260px; background: #0f0f1e; border-left: 2px solid #8b7355;
+  display: flex; flex-direction: column; overflow-y: auto; z-index: 10;
+}
+#turn-info {
+  background: #1a1520; padding: 10px; border-bottom: 1px solid #8b7355;
+  text-align: center; font-size: 14px;
+}
+#turn-info h2 { color: #f0c040; font-size: 16px; margin-bottom: 4px; }
+#unit-info {
+  padding: 10px; border-bottom: 1px solid #8b7355; min-height: 160px;
+}
+#unit-info h3 { color: #c0a060; font-size: 13px; margin-bottom: 6px; }
+.stat-row { display: flex; justify-content: space-between; font-size: 11px; margin: 2px 0; }
+.stat-label { color: #a09080; }
+.stat-value { color: #e0d5c0; font-weight: bold; }
+#actions {
+  padding: 10px; border-bottom: 1px solid #8b7355;
+}
+#actions h3 { color: #c0a060; font-size: 13px; margin-bottom: 6px; }
+.action-btn {
+  display: block; width: 100%; padding: 7px; margin: 3px 0;
+  background: #2a2040; color: #e0d5c0; border: 1px solid #5a4a6a;
+  cursor: pointer; font-size: 12px; font-family: inherit;
+  transition: background 0.15s;
+}
+.action-btn:hover { background: #3a3055; }
+.action-btn.active { background: #503080; border-color: #a060e0; color: #fff; }
+.action-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+#log-panel {
+  flex: 1; padding: 8px; overflow-y: auto; font-size: 10px; line-height: 1.5;
+}
+#log-panel h3 { color: #c0a060; font-size: 12px; margin-bottom: 4px; }
+.log-entry { color: #b0a090; border-bottom: 1px solid #2a2020; padding: 2px 0; }
+.log-entry.combat { color: #e06050; }
+.log-entry.move { color: #60a0e0; }
+.log-entry.system { color: #80c080; }
+#overlay {
+  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.75); display: flex; align-items: center; justify-content: center;
+  z-index: 100; display: none;
+}
+#overlay-box {
+  background: #1a1520; border: 3px solid #8b7355; padding: 40px; text-align: center;
+  max-width: 400px;
+}
+#overlay-box h1 { font-size: 28px; margin-bottom: 16px; }
+#overlay-box p { margin-bottom: 20px; color: #a09080; }
+#overlay-box button {
+  padding: 10px 30px; background: #503080; border: 2px solid #a060e0;
+  color: #fff; font-size: 16px; cursor: pointer; font-family: inherit;
+}
+#help-text {
+  position: absolute; bottom: 8px; left: 8px; font-size: 10px; color: #706060;
+  pointer-events: none;
+}
+.morale-bar { height: 6px; background: #333; margin-top: 3px; border-radius: 2px; overflow: hidden; }
+.morale-fill { height: 100%; background: linear-gradient(to right, #e04040, #e0c040, #40c040); transition: width 0.3s; }
+</style>
+</head>
+<body>
+<div id="canvas-container">
+  <canvas id="renderer"></canvas>
+  <div id="help-text">
+    マウスドラッグ: 回転 | スクロール: ズーム | WASD/矢印: 移動 | R: リセット
+  </div>
+  <div id="overlay">
+    <div id="overlay-box">
+      <h1 id="overlay-title">戦国合戦</h1>
+      <p id="overlay-msg">全軍、出陣せよ！</p>
+      <button id="overlay-btn">開始</button>
+    </div>
+  </div>
+</div>
+<div id="ui-panel">
+  <div id="turn-info">
+    <h2>戦国合戦</h2>
+    <div id="turn-num">第 1 ターン</div>
+    <div id="phase-info" style="color:#c0a060;font-size:12px;">あなたの番</div>
+  </div>
+  <div id="unit-info">
+    <h3>■ 部隊情報</h3>
+    <div id="unit-detail"><div style="color:#706050;font-size:11px;">部隊を選択してください</div></div>
+  </div>
+  <div id="actions">
+    <h3>■ 行動</h3>
+    <button class="action-btn" id="btn-move">移動</button>
+    <button class="action-btn" id="btn-rotL">← 左回転</button>
+    <button class="action-btn" id="btn-rotR">右回転 →</button>
+    <button class="action-btn" id="btn-attack">攻撃</button>
+    <button class="action-btn" id="btn-shoot">射撃</button>
+    <button class="action-btn" id="btn-defend">防御</button>
+    <button class="action-btn" id="btn-end" style="background:#3a1010;border-color:#8b3030;margin-top:8px;">ターン終了</button>
+  </div>
+  <div id="log-panel">
+    <h3>■ 戦況</h3>
+    <div id="log-entries"></div>
+  </div>
+</div>
+
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js';
+
+// ============================================================
+// CONSTANTS
+// ============================================================
+const GRID_W = 32, GRID_H = 32;
+const TILE_SIZE = 2.0;
+const MAX_HEIGHT = 4.0;
+const DIRS = [[0,-1],[1,-1],[1,0],[0,1],[-1,1],[-1,0]]; // hex directions
+// For square grid we use 8 directions for movement, 4 for facing
+const FACING_DIRS = 8; // 0=N,1=NE,2=E,3=SE,4=S,5=SW,6=W,7=NW
+const DIR_NAMES = ['北','北東','東','南東','南','南西','西','北西'];
+
+const TERRAIN_TYPES = {
+  PLAIN:   { name:'平野', color:0x5a8a3a, heightMult:0.0, moveCost:1, defense:0 },
+  RICE:    { name:'田んぼ', color:0x8aaa3a, heightMult:0.05, moveCost:1.2, defense:-1 },
+  FOREST:  { name:'林', color:0x2a5a2a, heightMult:0.3, moveCost:2, defense:2 },
+  SWAMP:   { name:'湿地', color:0x3a5a2a, heightMult:-0.1, moveCost:3, defense:-1 },
+  RIVER:   { name:'川', color:0x3a6aaa, heightMult:-0.2, moveCost:99, defense:0 },
+  HILL:    { name:'丘', color:0x7a6a4a, heightMult:1.0, moveCost:1.5, defense:3 },
+};
+
+const UNIT_TYPES = {
+  HONJIN:   { name:'本陣', sym:'⛩', hp:150, atk:12, def:15, moveRange:1, atkRange:1, shootRange:0, speed:1 },
+  CAVALRY:  { name:'騎馬', sym:'馬', hp:90, atk:20, def:8, moveRange:4, atkRange:1, shootRange:0, speed:4 },
+  MIXED:    { name:'騎馬足軽', sym:'騎', hp:80, atk:15, def:10, moveRange:3, atkRange:1, shootRange:0, speed:3 },
+  RIFLE:    { name:'鉄砲足軽', sym:'銃', hp:60, atk:22, def:6, moveRange:2, atkRange:1, shootRange:5, speed:2 },
+  BOW:      { name:'弓足軽', sym:'弓', hp:65, atk:14, def:7, moveRange:2, atkRange:1, shootRange:4, speed:2 },
+  INFANTRY: { name:'足軽', sym:'足', hp:70, atk:12, def:8, moveRange:2, atkRange:1, shootRange:0, speed:2 },
+  RABBLE:   { name:'烏合衆', sym:'衆', hp:50, atk:8, def:4, moveRange:2, atkRange:1, shootRange:0, speed:2 },
+};
+
+const COMMANDER_NAMES = ['織田信長','豊臣秀吉','徳川家康','武田信玄','上杉謙信',
+  '明智光秀','伊達政宗','毛利元就','島津義久','真田幸村',
+  '北条氏康','長宗我部元親','浅井長政','柴田勝家','前田利家',
+  '黒田官兵衛','竹中半兵衛','加藤清正','福島正則','石田三成'];
+
+// ============================================================
+// GAME STATE
+// ============================================================
+let terrain = [];
+let heightMap = [];
+let units = [];
+let turnNum = 1;
+let phase = 'player'; // 'player' | 'enemy'
+let selectedUnit = null;
+let currentAction = null; // 'move'|'attack'|'shoot'|'defend'
+let highlightedTiles = [];
+let gameOver = false;
+
+// ============================================================
+// THREE.JS SETUP
+// ============================================================
+const canvas = document.getElementById('renderer');
+const container = document.getElementById('canvas-container');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a2a3a);
+scene.fog = new THREE.Fog(0x1a2a3a, 80, 160);
+
+const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 500);
+camera.position.set(GRID_W * TILE_SIZE * 0.5, 40, GRID_H * TILE_SIZE * 0.8);
+camera.lookAt(GRID_W * TILE_SIZE * 0.5, 0, GRID_H * TILE_SIZE * 0.5);
+
+const controls = new OrbitControls(camera, canvas);
+controls.target.set(GRID_W * TILE_SIZE * 0.5, 0, GRID_H * TILE_SIZE * 0.5);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.minDistance = 10;
+controls.maxDistance = 120;
+controls.maxPolarAngle = Math.PI / 2.1;
+
+// Lights
+const ambientLight = new THREE.AmbientLight(0xffeedd, 0.6);
+scene.add(ambientLight);
+const sunLight = new THREE.DirectionalLight(0xfff5e0, 1.2);
+sunLight.position.set(40, 80, 30);
+sunLight.castShadow = true;
+sunLight.shadow.mapSize.set(2048, 2048);
+sunLight.shadow.camera.near = 1;
+sunLight.shadow.camera.far = 300;
+sunLight.shadow.camera.left = -80;
+sunLight.shadow.camera.right = 80;
+sunLight.shadow.camera.top = 80;
+sunLight.shadow.camera.bottom = -80;
+scene.add(sunLight);
+
+// Groups
+const terrainGroup = new THREE.Group();
+const unitGroup = new THREE.Group();
+const highlightGroup = new THREE.Group();
+const arrowGroup = new THREE.Group();
+scene.add(terrainGroup, highlightGroup, unitGroup, arrowGroup);
+
+// Raycaster
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+
+// ============================================================
+// NOISE (simple value noise)
+// ============================================================
+function noise2d(x, y, seed = 42) {
+  const n = Math.sin(x * 127.1 + y * 311.7 + seed) * 43758.5453;
+  return n - Math.floor(n);
+}
+function smoothNoise(x, y, seed) {
+  const ix = Math.floor(x), iy = Math.floor(y);
+  const fx = x - ix, fy = y - iy;
+  const ux = fx * fx * (3 - 2 * fx);
+  const uy = fy * fy * (3 - 2 * fy);
+  const a = noise2d(ix, iy, seed);
+  const b = noise2d(ix+1, iy, seed);
+  const c = noise2d(ix, iy+1, seed);
+  const d = noise2d(ix+1, iy+1, seed);
+  return a + (b-a)*ux + (c-a)*uy + (d-a)*ux*uy - (b-a)*ux*uy;
+}
+function fbm(x, y, seed) {
+  let v = 0, amp = 0.5, freq = 1, max = 0;
+  for (let i = 0; i < 5; i++) {
+    v += amp * smoothNoise(x * freq, y * freq, seed + i * 13);
+    max += amp; amp *= 0.5; freq *= 2;
+  }
+  return v / max;
+}
+
+// ============================================================
+// TERRAIN GENERATION
+// ============================================================
+function generateTerrain() {
+  terrain = [];
+  heightMap = [];
+  const seed = Math.floor(Math.random() * 1000);
+
+  for (let gz = 0; gz < GRID_H; gz++) {
+    terrain[gz] = [];
+    heightMap[gz] = [];
+    for (let gx = 0; gx < GRID_W; gx++) {
+      const nx = gx / GRID_W * 4;
+      const nz = gz / GRID_H * 4;
+      const h = fbm(nx, nz, seed);
+      const waterLevel = 0.32;
+      const swampLevel = 0.38;
+      const forestLevel = 0.62;
+      const hillLevel = 0.72;
+
+      let type, tileH;
+      if (h < waterLevel) {
+        type = 'RIVER'; tileH = -0.3;
+      } else if (h < swampLevel) {
+        type = 'SWAMP'; tileH = h * 0.5;
+      } else if (h < 0.48) {
+        type = 'RICE'; tileH = h * 0.8;
+      } else if (h < forestLevel) {
+        type = 'PLAIN'; tileH = h * 1.5;
+      } else if (h < hillLevel) {
+        type = 'FOREST'; tileH = h * 2.5;
+      } else {
+        type = 'HILL'; tileH = h * MAX_HEIGHT;
+      }
+      terrain[gz][gx] = type;
+      heightMap[gz][gx] = tileH;
+    }
+  }
+}
+
+// ============================================================
+// TERRAIN MESH BUILDING
+// ============================================================
+function buildTerrainMesh() {
+  // Clear old
+  while (terrainGroup.children.length) terrainGroup.remove(terrainGroup.children[0]);
+
+  // Build instanced mesh per terrain type
+  const typeGroups = {};
+  for (const key in TERRAIN_TYPES) typeGroups[key] = [];
+
+  for (let gz = 0; gz < GRID_H; gz++) {
+    for (let gx = 0; gx < GRID_W; gx++) {
+      typeGroups[terrain[gz][gx]].push({ gx, gz });
+    }
+  }
+
+  for (const key in TERRAIN_TYPES) {
+    const tType = TERRAIN_TYPES[key];
+    const tiles = typeGroups[key];
+    if (!tiles.length) continue;
+    const mat = new THREE.MeshLambertMaterial({ color: tType.color });
+
+    tiles.forEach(({ gx, gz }) => {
+      const h = Math.max(0.15, heightMap[gz][gx] + 0.5);
+      const geom = new THREE.BoxGeometry(TILE_SIZE * 0.98, h, TILE_SIZE * 0.98);
+      const mesh = new THREE.Mesh(geom, mat);
+      mesh.position.set(
+        gx * TILE_SIZE + TILE_SIZE * 0.5,
+        h * 0.5,
+        gz * TILE_SIZE + TILE_SIZE * 0.5
+      );
+      mesh.castShadow = false;
+      mesh.receiveShadow = true;
+      mesh.userData = { gx, gz, isTile: true };
+      terrainGroup.add(mesh);
+    });
+  }
+}
+
+// tile mesh lookup
+const tileMeshMap = {};
+function buildTileMeshMap() {
+  for (const mesh of terrainGroup.children) {
+    const { gx, gz } = mesh.userData;
+    tileMeshMap[`${gx},${gz}`] = mesh;
+  }
+}
+function getTileMesh(gx, gz) { return tileMeshMap[`${gx},${gz}`]; }
+function getTileTopY(gx, gz) {
+  if (gx < 0 || gz < 0 || gx >= GRID_W || gz >= GRID_H) return 0;
+  const h = Math.max(0.15, heightMap[gz][gx] + 0.5);
+  return h;
+}
+
+// ============================================================
+// UNITS
+// ============================================================
+let cmdIdx = 0;
+function nextCommander() {
+  return COMMANDER_NAMES[cmdIdx++ % COMMANDER_NAMES.length];
+}
+
+function createUnit(gx, gz, typeKey, side, facing = 4) {
+  const typeData = UNIT_TYPES[typeKey];
+  const maxHp = typeData.hp * (1 + Math.random() * 0.3);
+  const unit = {
+    id: units.length,
+    gx, gz,
+    type: typeKey,
+    side, // 'player' | 'enemy'
+    facing, // 0-7
+    hp: maxHp,
+    maxHp,
+    soldiers: Math.floor(800 + Math.random() * 400),
+    morale: 80 + Math.floor(Math.random() * 20),
+    commander: nextCommander(),
+    actedThisTurn: false,
+    defending: false,
+    mesh: null,
+    arrowMesh: null,
+    labelSprite: null,
+  };
+  units.push(unit);
+  buildUnitMesh(unit);
+  return unit;
+}
+
+const unitMats = {
+  player: new THREE.MeshLambertMaterial({ color: 0x3060d0 }),
+  enemy:  new THREE.MeshLambertMaterial({ color: 0xd03030 }),
+  playerAct: new THREE.MeshLambertMaterial({ color: 0x1040a0 }),
+};
+
+function buildUnitMesh(unit) {
+  // Remove old
+  if (unit.mesh) { unitGroup.remove(unit.mesh); }
+  if (unit.arrowMesh) { arrowGroup.remove(unit.arrowMesh); }
+
+  const topY = getTileTopY(unit.gx, unit.gz);
+  const mat = unit.side === 'player' ? unitMats.player : unitMats.enemy;
+
+  // Base block
+  const base = new THREE.BoxGeometry(1.2, 1.0, 1.2);
+  const mesh = new THREE.Mesh(base, mat.clone());
+  mesh.position.set(
+    unit.gx * TILE_SIZE + TILE_SIZE * 0.5,
+    topY + 0.5,
+    unit.gz * TILE_SIZE + TILE_SIZE * 0.5
+  );
+  mesh.castShadow = true;
+  mesh.userData = { unitId: unit.id, isUnit: true };
+  unitGroup.add(mesh);
+  unit.mesh = mesh;
+
+  // Top marker (凸 shape approximated by a smaller box on top)
+  const topGeom = new THREE.BoxGeometry(0.5, 0.3, 0.5);
+  const topMesh = new THREE.Mesh(topGeom, mat.clone());
+  topMesh.position.set(0, 0.65, 0);
+  mesh.add(topMesh);
+
+  // Direction arrow
+  const arrowGeom = new THREE.ConeGeometry(0.35, 0.7, 4);
+  const arrowMat = new THREE.MeshBasicMaterial({ color: unit.side === 'player' ? 0xaaddff : 0xffaaaa });
+  const arrow = new THREE.Mesh(arrowGeom, arrowMat);
+  arrow.position.set(
+    unit.gx * TILE_SIZE + TILE_SIZE * 0.5,
+    topY + 1.3,
+    unit.gz * TILE_SIZE + TILE_SIZE * 0.5
+  );
+  updateArrowRotation(arrow, unit.facing);
+  arrowGroup.add(arrow);
+  unit.arrowMesh = arrow;
+}
+
+function updateArrowRotation(arrowMesh, facing) {
+  const angle = (facing / 8) * Math.PI * 2;
+  arrowMesh.rotation.set(0, 0, 0);
+  // Cone points up by default; tilt forward and rotate
+  arrowMesh.rotation.z = -Math.PI / 2;
+  arrowMesh.rotation.y = -angle + Math.PI / 2;
+}
+
+function updateUnitMeshPosition(unit) {
+  const topY = getTileTopY(unit.gx, unit.gz);
+  if (unit.mesh) {
+    unit.mesh.position.set(
+      unit.gx * TILE_SIZE + TILE_SIZE * 0.5,
+      topY + 0.5,
+      unit.gz * TILE_SIZE + TILE_SIZE * 0.5
+    );
+  }
+  if (unit.arrowMesh) {
+    unit.arrowMesh.position.set(
+      unit.gx * TILE_SIZE + TILE_SIZE * 0.5,
+      topY + 1.3,
+      unit.gz * TILE_SIZE + TILE_SIZE * 0.5
+    );
+    updateArrowRotation(unit.arrowMesh, unit.facing);
+  }
+}
+
+function removeUnitMesh(unit) {
+  if (unit.mesh) { unitGroup.remove(unit.mesh); unit.mesh = null; }
+  if (unit.arrowMesh) { arrowGroup.remove(unit.arrowMesh); unit.arrowMesh = null; }
+}
+
+// ============================================================
+// UNIT PLACEMENT
+// ============================================================
+function placeUnits() {
+  // Player: left side (gz 4-28, gx 2-10)
+  const playerTypes = ['HONJIN','CAVALRY','CAVALRY','RIFLE','RIFLE','BOW','INFANTRY','INFANTRY','INFANTRY','MIXED'];
+  const enemyTypes  = ['HONJIN','CAVALRY','CAVALRY','RIFLE','RIFLE','BOW','INFANTRY','INFANTRY','INFANTRY','MIXED'];
+
+  const usedTiles = new Set();
+  function findTile(gxMin, gxMax, gzMin, gzMax) {
+    for (let attempt = 0; attempt < 200; attempt++) {
+      const gx = gxMin + Math.floor(Math.random() * (gxMax - gxMin));
+      const gz = gzMin + Math.floor(Math.random() * (gzMax - gzMin));
+      const key = `${gx},${gz}`;
+      if (!usedTiles.has(key) && terrain[gz][gx] !== 'RIVER') {
+        usedTiles.add(key);
+        return { gx, gz };
+      }
+    }
+    return { gx: gxMin, gz: gzMin };
+  }
+
+  playerTypes.forEach(t => {
+    const pos = findTile(2, 12, 4, 28);
+    createUnit(pos.gx, pos.gz, t, 'player', 2); // facing East
+  });
+  enemyTypes.forEach(t => {
+    const pos = findTile(20, 30, 4, 28);
+    createUnit(pos.gx, pos.gz, t, 'enemy', 6); // facing West
+  });
+}
+
+// ============================================================
+// HIGHLIGHT SYSTEM
+// ============================================================
+const hlMats = {
+  move:   new THREE.MeshBasicMaterial({ color: 0x2255ff, transparent: true, opacity: 0.45, depthWrite: false }),
+  attack: new THREE.MeshBasicMaterial({ color: 0xff2222, transparent: true, opacity: 0.45, depthWrite: false }),
+  shoot:  new THREE.MeshBasicMaterial({ color: 0xff8800, transparent: true, opacity: 0.45, depthWrite: false }),
+  select: new THREE.MeshBasicMaterial({ color: 0xffff00, transparent: true, opacity: 0.55, depthWrite: false }),
+};
+const hlGeom = new THREE.PlaneGeometry(TILE_SIZE * 0.95, TILE_SIZE * 0.95);
+
+function clearHighlights() {
+  while (highlightGroup.children.length) highlightGroup.remove(highlightGroup.children[0]);
+  highlightedTiles = [];
+}
+
+function addHighlight(gx, gz, matKey) {
+  const topY = getTileTopY(gx, gz);
+  const mesh = new THREE.Mesh(hlGeom, hlMats[matKey]);
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.position.set(gx * TILE_SIZE + TILE_SIZE * 0.5, topY + 0.05, gz * TILE_SIZE + TILE_SIZE * 0.5);
+  mesh.userData = { gx, gz, hlType: matKey };
+  highlightGroup.add(mesh);
+  highlightedTiles.push({ gx, gz, type: matKey });
+}
+
+// ============================================================
+// RANGE / PATHFINDING
+// ============================================================
+function dist(ax, az, bx, bz) {
+  return Math.abs(ax - bx) + Math.abs(az - bz);
+}
+
+function isOccupied(gx, gz) {
+  return units.some(u => u.hp > 0 && u.gx === gx && u.gz === gz);
+}
+
+function getMoveRange(unit) {
+  const typeData = UNIT_TYPES[unit.type];
+  let range = typeData.moveRange;
+  // Degrade by soldiers
+  if (unit.soldiers > 1500) range = Math.max(1, range - 1);
+  // Morale penalty
+  if (unit.morale < 40) range = Math.max(1, range - 1);
+  return range;
+}
+
+function getMoveCost(gx, gz) {
+  if (gx < 0 || gz < 0 || gx >= GRID_W || gz >= GRID_H) return 99;
+  return TERRAIN_TYPES[terrain[gz][gx]].moveCost;
+}
+
+function getReachableTiles(unit) {
+  const range = getMoveRange(unit);
+  const reachable = [];
+  const visited = {};
+  const queue = [{ gx: unit.gx, gz: unit.gz, cost: 0 }];
+  visited[`${unit.gx},${unit.gz}`] = 0;
+
+  while (queue.length) {
+    const cur = queue.shift();
+    if (cur.cost >= range) continue;
+    for (const [dx, dz] of [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[1,-1],[-1,1],[1,1]]) {
+      const nx = cur.gx + dx, nz = cur.gz + dz;
+      if (nx < 0 || nz < 0 || nx >= GRID_W || nz >= GRID_H) continue;
+      const cost = cur.cost + getMoveCost(nx, nz) * 0.5;
+      // Slope cost
+      const dh = heightMap[nz][nx] - heightMap[cur.gz][cur.gx];
+      const slopeCost = dh > 0 ? dh * 1.5 : 0;
+      const total = cost + slopeCost;
+      const key = `${nx},${nz}`;
+      if (total <= range && (!visited[key] || visited[key] > total)) {
+        visited[key] = total;
+        if (!isOccupied(nx, nz)) {
+          reachable.push({ gx: nx, gz: nz });
+          queue.push({ gx: nx, gz: nz, cost: total });
+        }
+      }
+    }
+  }
+  return reachable;
+}
+
+function getAttackTargets(unit, rangeOverride) {
+  const atkRange = rangeOverride || UNIT_TYPES[unit.type].atkRange;
+  const targets = [];
+  for (const other of units) {
+    if (other.hp <= 0 || other.side === unit.side) continue;
+    const d = dist(unit.gx, unit.gz, other.gx, other.gz);
+    if (d <= atkRange) targets.push(other);
+  }
+  return targets;
+}
+
+function getShootTargets(unit) {
+  const range = UNIT_TYPES[unit.type].shootRange;
+  if (!range) return [];
+  return getAttackTargets(unit, range);
+}
+
+// ============================================================
+// COMBAT
+// ============================================================
+function getFacingMult(attacker, defender) {
+  // Determine relative direction from attacker to defender
+  const dx = defender.gx - attacker.gx;
+  const dz = defender.gz - attacker.gz;
+  // Attacker facing direction
+  const attackerFacingAngle = (attacker.facing / 8) * Math.PI * 2;
+  const attackDir = Math.atan2(dz, dx); // angle of attack vector in XZ
+
+  // Map attackerFacing to XZ angle
+  // facing 0=N(-Z), 2=E(+X), 4=S(+Z), 6=W(-X)
+  // facing angle in terms of XZ: facing 0 => angle = -PI/2 (north = -Z)
+  const facingAngle = (attacker.facing / 8) * Math.PI * 2 - Math.PI / 2;
+
+  // Defender facing
+  const defFacingAngle = (defender.facing / 8) * Math.PI * 2 - Math.PI / 2;
+  // Attack comes from attacker position relative to defender
+  const attackOnDefDir = Math.atan2(attacker.gz - defender.gz, attacker.gx - defender.gx);
+  const relAngle = normalizeAngle(defFacingAngle - attackOnDefDir);
+  if (Math.abs(relAngle) < Math.PI * 0.35) return 1.0;   // front
+  if (Math.abs(relAngle) < Math.PI * 0.7) return 1.3;    // flank
+  return 1.8; // rear
+}
+
+function normalizeAngle(a) {
+  while (a > Math.PI) a -= Math.PI * 2;
+  while (a < -Math.PI) a += Math.PI * 2;
+  return a;
+}
+
+function getHeightBonus(attacker, defender) {
+  const dh = heightMap[attacker.gz][attacker.gx] - heightMap[defender.gz][defender.gx];
+  return 1.0 + dh * 0.15;
+}
+
+function doAttack(attacker, defender, isRanged = false) {
+  const typeData = UNIT_TYPES[attacker.type];
+  let dmg = typeData.atk * (0.8 + Math.random() * 0.4);
+  const facingMult = getFacingMult(attacker, defender);
+  const heightMult = getHeightBonus(attacker, defender);
+  const terrainDef = TERRAIN_TYPES[terrain[defender.gz][defender.gx]].defense;
+  const defBonus = UNIT_TYPES[defender.type].def;
+  const defMult = defender.defending ? 0.5 : 1.0;
+
+  dmg = dmg * facingMult * heightMult * defMult;
+  dmg -= (defBonus + terrainDef) * 0.5;
+  dmg = Math.max(1, Math.floor(dmg));
+
+  defender.hp = Math.max(0, defender.hp - dmg);
+  // Morale damage
+  const moraleDmg = Math.floor(dmg * 0.3);
+  defender.morale = Math.max(0, defender.morale - moraleDmg);
+
+  const facingStr = facingMult > 1.5 ? '背後攻撃！' : facingMult > 1.2 ? '側面攻撃！' : '';
+  const highStr = heightMult > 1.1 ? '高地から！' : '';
+  addLog(`${attacker.commander} が ${defender.commander} に ${dmg} ダメージ${facingStr?'（'+facingStr+'）':''}${highStr}`, 'combat');
+
+  if (defender.hp <= 0) {
+    addLog(`${defender.commander} の部隊が壊滅！`, 'combat');
+    removeUnitMesh(defender);
+    updateUI();
+  }
+  updateUnitDisplay();
+}
+
+// ============================================================
+// ACTION HANDLERS
+// ============================================================
+function setAction(action) {
+  if (!selectedUnit || selectedUnit.actedThisTurn || phase !== 'player') return;
+  currentAction = action;
+  clearHighlights();
+  updateActionButtons();
+
+  // Highlight selected unit
+  addHighlight(selectedUnit.gx, selectedUnit.gz, 'select');
+
+  if (action === 'move') {
+    const tiles = getReachableTiles(selectedUnit);
+    tiles.forEach(t => addHighlight(t.gx, t.gz, 'move'));
+  } else if (action === 'attack') {
+    const targets = getAttackTargets(selectedUnit);
+    targets.forEach(u => addHighlight(u.gx, u.gz, 'attack'));
+  } else if (action === 'shoot') {
+    const targets = getShootTargets(selectedUnit);
+    targets.forEach(u => addHighlight(u.gx, u.gz, 'shoot'));
+  } else if (action === 'defend') {
+    selectedUnit.defending = true;
+    selectedUnit.actedThisTurn = true;
+    addLog(`${selectedUnit.commander} が防御態勢を取った`, 'move');
+    currentAction = null;
+    clearHighlights();
+    updateUI();
+  }
+}
+
+function handleTileClick(gx, gz) {
+  if (phase !== 'player' || gameOver) return;
+
+  // Check if clicking a unit
+  const clickedUnit = units.find(u => u.hp > 0 && u.gx === gx && u.gz === gz);
+
+  if (currentAction === 'move') {
+    const hl = highlightedTiles.find(h => h.gx === gx && h.gz === gz && h.type === 'move');
+    if (hl && selectedUnit) {
+      selectedUnit.gx = gx;
+      selectedUnit.gz = gz;
+      selectedUnit.actedThisTurn = true;
+      updateUnitMeshPosition(selectedUnit);
+      addLog(`${selectedUnit.commander} が移動した`, 'move');
+      currentAction = null;
+      clearHighlights();
+      addHighlight(selectedUnit.gx, selectedUnit.gz, 'select');
+      updateUI();
+      return;
+    }
+  } else if (currentAction === 'attack') {
+    const hl = highlightedTiles.find(h => h.gx === gx && h.gz === gz && h.type === 'attack');
+    if (hl && clickedUnit && selectedUnit) {
+      doAttack(selectedUnit, clickedUnit, false);
+      selectedUnit.actedThisTurn = true;
+      currentAction = null;
+      clearHighlights();
+      addHighlight(selectedUnit.gx, selectedUnit.gz, 'select');
+      checkVictory();
+      updateUI();
+      return;
+    }
+  } else if (currentAction === 'shoot') {
+    const hl = highlightedTiles.find(h => h.gx === gx && h.gz === gz && (h.type === 'shoot' || h.type === 'attack'));
+    if (clickedUnit && clickedUnit.side !== selectedUnit.side) {
+      const targets = getShootTargets(selectedUnit);
+      if (targets.includes(clickedUnit)) {
+        doAttack(selectedUnit, clickedUnit, true);
+        selectedUnit.actedThisTurn = true;
+        currentAction = null;
+        clearHighlights();
+        addHighlight(selectedUnit.gx, selectedUnit.gz, 'select');
+        checkVictory();
+        updateUI();
+        return;
+      }
+    }
+  }
+
+  // Select a unit
+  if (clickedUnit && clickedUnit.side === 'player' && clickedUnit.hp > 0) {
+    selectedUnit = clickedUnit;
+    currentAction = null;
+    clearHighlights();
+    addHighlight(selectedUnit.gx, selectedUnit.gz, 'select');
+    updateUI();
+  }
+}
+
+function rotateUnit(dir) {
+  if (!selectedUnit || phase !== 'player' || gameOver) return;
+  selectedUnit.facing = (selectedUnit.facing + dir + 8) % 8;
+  updateUnitMeshPosition(selectedUnit);
+  addLog(`${selectedUnit.commander} が向きを変えた (${DIR_NAMES[selectedUnit.facing]})`, 'move');
+  updateUI();
+}
+
+// ============================================================
+// ENEMY AI
+// ============================================================
+async function doEnemyTurn() {
+  addLog('--- 敵の番 ---', 'system');
+  const enemies = units.filter(u => u.hp > 0 && u.side === 'enemy');
+  const players = units.filter(u => u.hp > 0 && u.side === 'player');
+  if (!players.length) return;
+
+  for (const enemy of enemies) {
+    if (enemy.hp <= 0) continue;
+    enemy.actedThisTurn = false;
+
+    await sleep(300);
+
+    // Find nearest player
+    let nearest = null, nearDist = Infinity;
+    for (const p of players) {
+      if (p.hp <= 0) continue;
+      const d = dist(enemy.gx, enemy.gz, p.gx, p.gz);
+      if (d < nearDist) { nearDist = d; nearest = p; }
+    }
+    if (!nearest) continue;
+
+    // Face toward target
+    const dx = nearest.gx - enemy.gx, dz = nearest.gz - enemy.gz;
+    const angle = Math.atan2(dz, dx);
+    enemy.facing = Math.round(((angle + Math.PI / 2) / (Math.PI * 2) * 8 + 8)) % 8;
+    updateUnitMeshPosition(enemy);
+
+    // Try shoot first
+    if (UNIT_TYPES[enemy.type].shootRange) {
+      const shootTargets = getShootTargets(enemy);
+      if (shootTargets.length) {
+        doAttack(enemy, shootTargets[0], true);
+        enemy.actedThisTurn = true;
+        checkVictory();
+        if (gameOver) return;
+        continue;
+      }
+    }
+
+    // Try melee attack
+    const atkTargets = getAttackTargets(enemy);
+    if (atkTargets.length) {
+      // Prefer highest damage (flanks/rear)
+      let best = atkTargets[0], bestMult = getFacingMult(enemy, atkTargets[0]);
+      for (const t of atkTargets) {
+        const m = getFacingMult(enemy, t);
+        if (m > bestMult) { bestMult = m; best = t; }
+      }
+      doAttack(enemy, best, false);
+      enemy.actedThisTurn = true;
+      checkVictory();
+      if (gameOver) return;
+      continue;
+    }
+
+    // Move toward nearest
+    const moveTiles = getReachableTiles(enemy);
+    if (moveTiles.length) {
+      // Pick tile closest to target, prefer downhill
+      let bestTile = moveTiles[0], bestScore = Infinity;
+      for (const t of moveTiles) {
+        const d = dist(t.gx, t.gz, nearest.gx, nearest.gz);
+        const heightPenalty = heightMap[nearest.gz][nearest.gx] - heightMap[t.gz][t.gx]; // prefer higher than target
+        const score = d - heightPenalty * 0.5;
+        if (score < bestScore) { bestScore = score; bestTile = t; }
+      }
+      enemy.gx = bestTile.gx;
+      enemy.gz = bestTile.gz;
+      updateUnitMeshPosition(enemy);
+      addLog(`${enemy.commander} が前進した`, 'move');
+    }
+    enemy.actedThisTurn = true;
+  }
+
+  // Start player turn
+  setTimeout(() => {
+    addLog('--- あなたの番 ---', 'system');
+    turnNum++;
+    phase = 'player';
+    units.forEach(u => { u.actedThisTurn = false; u.defending = false; });
+    selectedUnit = null;
+    clearHighlights();
+    updateUI();
+  }, 400);
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function endPlayerTurn() {
+  if (phase !== 'player' || gameOver) return;
+  selectedUnit = null;
+  currentAction = null;
+  clearHighlights();
+  phase = 'enemy';
+  updateUI();
+  setTimeout(doEnemyTurn, 500);
+}
+
+// ============================================================
+// VICTORY CHECK
+// ============================================================
+function checkVictory() {
+  const players = units.filter(u => u.hp > 0 && u.side === 'player');
+  const enemies = units.filter(u => u.hp > 0 && u.side === 'enemy');
+  if (!enemies.length) {
+    showOverlay('勝利！', '敵軍を全滅させた！天下統一まであと一歩！', '再戦');
+    gameOver = true;
+  } else if (!players.length) {
+    showOverlay('敗北...', '味方部隊が壊滅した。再起を期せ！', '再戦');
+    gameOver = true;
+  }
+}
+
+// ============================================================
+// UI
+// ============================================================
+function addLog(msg, cls = '') {
+  const el = document.getElementById('log-entries');
+  const div = document.createElement('div');
+  div.className = 'log-entry ' + cls;
+  div.textContent = msg;
+  el.insertBefore(div, el.firstChild);
+  if (el.children.length > 60) el.removeChild(el.lastChild);
+}
+
+function updateUI() {
+  document.getElementById('turn-num').textContent = `第 ${turnNum} ターン`;
+  document.getElementById('phase-info').textContent = phase === 'player' ? 'あなたの番' : '敵の思案中...';
+  document.getElementById('phase-info').style.color = phase === 'player' ? '#60c060' : '#c06060';
+  updateUnitDisplay();
+  updateActionButtons();
+}
+
+function updateUnitDisplay() {
+  const el = document.getElementById('unit-detail');
+  if (!selectedUnit || selectedUnit.hp <= 0) {
+    el.innerHTML = '<div style="color:#706050;font-size:11px;">部隊を選択してください</div>';
+    return;
+  }
+  const u = selectedUnit;
+  const td = UNIT_TYPES[u.type];
+  const hpPct = Math.round(u.hp / u.maxHp * 100);
+  const morPct = u.morale;
+  el.innerHTML = `
+    <div class="stat-row"><span class="stat-label">部隊種</span><span class="stat-value">${td.name} ${td.sym}</span></div>
+    <div class="stat-row"><span class="stat-label">武将</span><span class="stat-value">${u.commander}</span></div>
+    <div class="stat-row"><span class="stat-label">兵力</span><span class="stat-value">${u.soldiers}人</span></div>
+    <div class="stat-row"><span class="stat-label">HP</span><span class="stat-value">${hpPct}%</span></div>
+    <div class="morale-bar"><div class="morale-fill" style="width:${hpPct}%;background:${hpPct>60?'#40c040':hpPct>30?'#c0c040':'#c04040'}"></div></div>
+    <div class="stat-row" style="margin-top:4px"><span class="stat-label">士気</span><span class="stat-value">${morPct}</span></div>
+    <div class="morale-bar"><div class="morale-fill" style="width:${morPct}%;background:${morPct>60?'#4080ff':morPct>30?'#8040ff':'#ff4040'}"></div></div>
+    <div class="stat-row" style="margin-top:4px"><span class="stat-label">向き</span><span class="stat-value">${DIR_NAMES[u.facing]}</span></div>
+    <div class="stat-row"><span class="stat-label">地形</span><span class="stat-value">${TERRAIN_TYPES[terrain[u.gz]?.[u.gx]||'PLAIN'].name}</span></div>
+    <div class="stat-row"><span class="stat-label">攻撃力</span><span class="stat-value">${td.atk}</span></div>
+    <div class="stat-row"><span class="stat-label">防御力</span><span class="stat-value">${td.def}</span></div>
+    <div class="stat-row"><span class="stat-label">移動力</span><span class="stat-value">${getMoveRange(u)}</span></div>
+    ${td.shootRange ? `<div class="stat-row"><span class="stat-label">射程</span><span class="stat-value">${td.shootRange}</span></div>` : ''}
+    <div class="stat-row"><span class="stat-label">状態</span><span class="stat-value">${u.defending?'防御中':u.actedThisTurn?'行動済':'待機中'}</span></div>
+  `;
+}
+
+function updateActionButtons() {
+  const isPlayer = phase === 'player';
+  const hasUnit = selectedUnit && selectedUnit.hp > 0 && selectedUnit.side === 'player';
+  const canAct = hasUnit && !selectedUnit.actedThisTurn && isPlayer;
+  const td = hasUnit ? UNIT_TYPES[selectedUnit.type] : null;
+
+  document.getElementById('btn-move').disabled = !canAct;
+  document.getElementById('btn-rotL').disabled = !hasUnit || !isPlayer;
+  document.getElementById('btn-rotR').disabled = !hasUnit || !isPlayer;
+  document.getElementById('btn-attack').disabled = !canAct;
+  document.getElementById('btn-shoot').disabled = !canAct || !td || !td.shootRange;
+  document.getElementById('btn-defend').disabled = !canAct;
+  document.getElementById('btn-end').disabled = !isPlayer || gameOver;
+
+  ['btn-move','btn-rotL','btn-rotR','btn-attack','btn-shoot','btn-defend'].forEach(id => {
+    const btn = document.getElementById(id);
+    const actionMap = { 'btn-move':'move', 'btn-attack':'attack', 'btn-shoot':'shoot', 'btn-defend':'defend' };
+    btn.classList.toggle('active', actionMap[id] === currentAction);
+  });
+}
+
+function showOverlay(title, msg, btnText) {
+  document.getElementById('overlay-title').textContent = title;
+  document.getElementById('overlay-msg').textContent = msg;
+  document.getElementById('overlay-btn').textContent = btnText;
+  document.getElementById('overlay').style.display = 'flex';
+}
+
+// ============================================================
+// INPUT
+// ============================================================
+const keysDown = new Set();
+window.addEventListener('keydown', e => {
+  keysDown.add(e.key.toLowerCase());
+  if (e.key === 'r' || e.key === 'R') resetCamera();
+});
+window.addEventListener('keyup', e => keysDown.delete(e.key.toLowerCase()));
+
+function resetCamera() {
+  camera.position.set(GRID_W * TILE_SIZE * 0.5, 40, GRID_H * TILE_SIZE * 0.8);
+  controls.target.set(GRID_W * TILE_SIZE * 0.5, 0, GRID_H * TILE_SIZE * 0.5);
+  controls.update();
+}
+
+function handleCameraKeys() {
+  const speed = 0.5;
+  const fwd = new THREE.Vector3();
+  camera.getWorldDirection(fwd);
+  fwd.y = 0; fwd.normalize();
+  const right = new THREE.Vector3().crossVectors(fwd, camera.up).normalize();
+
+  if (keysDown.has('w') || keysDown.has('arrowup'))    { camera.position.addScaledVector(fwd, speed); controls.target.addScaledVector(fwd, speed); }
+  if (keysDown.has('s') || keysDown.has('arrowdown'))  { camera.position.addScaledVector(fwd, -speed); controls.target.addScaledVector(fwd, -speed); }
+  if (keysDown.has('a') || keysDown.has('arrowleft'))  { camera.position.addScaledVector(right, -speed); controls.target.addScaledVector(right, -speed); }
+  if (keysDown.has('d') || keysDown.has('arrowright')) { camera.position.addScaledVector(right, speed); controls.target.addScaledVector(right, speed); }
+}
+
+canvas.addEventListener('click', e => {
+  if (phase !== 'player' || gameOver) return;
+  const rect = canvas.getBoundingClientRect();
+  mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+  mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(mouse, camera);
+
+  // Check unit meshes first
+  const unitIntersects = raycaster.intersectObjects(unitGroup.children, true);
+  if (unitIntersects.length) {
+    let obj = unitIntersects[0].object;
+    while (obj && !obj.userData.unitId !== undefined && !obj.userData.isUnit) obj = obj.parent;
+    if (obj) {
+      // Walk up to find unit
+      let target = obj;
+      while (target && target.userData.unitId === undefined) target = target.parent;
+      if (target && target.userData.unitId !== undefined) {
+        const uid = target.userData.unitId;
+        const clickedUnit = units[uid];
+        if (clickedUnit && clickedUnit.hp > 0) {
+          handleTileClick(clickedUnit.gx, clickedUnit.gz);
+          return;
+        }
+      }
+    }
+  }
+
+  // Check terrain
+  const terrainIntersects = raycaster.intersectObjects(terrainGroup.children, false);
+  if (terrainIntersects.length) {
+    const { gx, gz } = terrainIntersects[0].object.userData;
+    handleTileClick(gx, gz);
+  }
+
+  // Check highlights
+  const hlIntersects = raycaster.intersectObjects(highlightGroup.children, false);
+  if (hlIntersects.length) {
+    const { gx, gz } = hlIntersects[0].object.userData;
+    handleTileClick(gx, gz);
+  }
+});
+
+// Button events
+document.getElementById('btn-move').addEventListener('click', () => setAction('move'));
+document.getElementById('btn-rotL').addEventListener('click', () => rotateUnit(-1));
+document.getElementById('btn-rotR').addEventListener('click', () => rotateUnit(1));
+document.getElementById('btn-attack').addEventListener('click', () => setAction('attack'));
+document.getElementById('btn-shoot').addEventListener('click', () => setAction('shoot'));
+document.getElementById('btn-defend').addEventListener('click', () => setAction('defend'));
+document.getElementById('btn-end').addEventListener('click', () => endPlayerTurn());
+document.getElementById('overlay-btn').addEventListener('click', () => {
+  document.getElementById('overlay').style.display = 'none';
+  resetGame();
+});
+
+// ============================================================
+// RESIZE
+// ============================================================
+function onResize() {
+  const w = container.clientWidth, h = container.clientHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', onResize);
+
+// ============================================================
+// GAME INIT / RESET
+// ============================================================
+function resetGame() {
+  gameOver = false;
+  turnNum = 1;
+  phase = 'player';
+  selectedUnit = null;
+  currentAction = null;
+  cmdIdx = 0;
+
+  // Remove all unit meshes
+  units.forEach(u => removeUnitMesh(u));
+  units = [];
+  clearHighlights();
+
+  generateTerrain();
+  buildTerrainMesh();
+  buildTileMeshMap();
+  placeUnits();
+
+  addLog('--- 合戦開始！ ---', 'system');
+  addLog('あなたの番です。部隊を選択してください。', 'system');
+  updateUI();
+}
+
+// ============================================================
+// RENDER LOOP
+// ============================================================
+function animate() {
+  requestAnimationFrame(animate);
+  handleCameraKeys();
+  controls.update();
+
+  // Flash acted units dimmer
+  for (const u of units) {
+    if (!u.mesh) continue;
+    const mat = u.mesh.material;
+    if (u.actedThisTurn && u.side === 'player') {
+      mat.color.setHex(0x1a3060);
+    } else if (u.side === 'player') {
+      mat.color.setHex(selectedUnit === u ? 0x60a0ff : 0x3060d0);
+    } else {
+      mat.color.setHex(0xd03030);
+    }
+  }
+
+  renderer.render(scene, camera);
+}
+
+// ============================================================
+// START
+// ============================================================
+onResize();
+document.getElementById('overlay').style.display = 'flex';
+document.getElementById('overlay-btn').addEventListener('click', () => {
+  document.getElementById('overlay').style.display = 'none';
+  resetGame();
+}, { once: true });
+
+// Pre-generate so it's ready
+generateTerrain();
+buildTerrainMesh();
+buildTileMeshMap();
+
+animate();
+</script>
+</body>
+</html>
