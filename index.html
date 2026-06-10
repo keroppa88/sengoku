@@ -62,11 +62,11 @@ body { display: flex; font-family: 'MS Gothic', monospace; color: #e0d5c0; }
 <div id="canvas-wrap">
   <canvas id="c"></canvas>
   <div id="help">ドラッグ:回転 ｜ ホイール:ズーム ｜ WASD:移動 ｜ R:リセット</div>
-  <div id="overlay">
+  <div id="overlay" style="display:none">
     <div id="ovbox">
-      <h1>⚔ 戦国合戦</h1>
-      <p>3D戦場で敵軍を殲滅せよ<br>部隊を選択し指揮を執れ</p>
-      <button id="ov-btn">出陣！</button>
+      <h1 id="ov-title">勝利！</h1>
+      <p id="ov-msg"></p>
+      <button id="ov-btn">再戦する</button>
     </div>
   </div>
 </div>
@@ -517,8 +517,8 @@ function endTurn(){
 function chkVic(){
   const pa=units.filter(u=>u.hp>0&&u.side==='player');
   const ea=units.filter(u=>u.hp>0&&u.side==='enemy');
-  if(!ea.length){showOv('勝利！','敵軍を全滅させた！天下統一！','再戦する');over=true;}
-  else if(!pa.length){showOv('敗北...','味方部隊が壊滅した。','再起する');over=true;}
+  if(!ea.length){showOv('勝利！','敵軍を全滅させた！天下統一！');over=true;}
+  else if(!pa.length){showOv('敗北...','味方部隊が壊滅した。');over=true;}
 }
 
 // ── UI ─────────────────────────────────────────────────────
@@ -575,10 +575,9 @@ function updBtns(){
   });
 }
 
-function showOv(t,m,b){
-  document.getElementById('ovbox').querySelector('h1').textContent=t;
-  document.getElementById('ovbox').querySelector('p').textContent=m;
-  document.getElementById('ov-btn').textContent=b;
+function showOv(t,m){
+  document.getElementById('ov-title').textContent=t;
+  document.getElementById('ov-msg').textContent=m;
   document.getElementById('overlay').style.display='flex';
 }
 
@@ -681,14 +680,16 @@ function animate(){
 
 // ── Boot ───────────────────────────────────────────────────
 // Use rAF to ensure layout is complete before sizing
+document.getElementById('ov-btn').addEventListener('click',()=>{
+  document.getElementById('overlay').style.display='none';
+  startGame();
+});
+
 requestAnimationFrame(()=>{
   requestAnimationFrame(()=>{
     onResize();
     animate();
-    document.getElementById('ov-btn').onclick=()=>{
-      document.getElementById('overlay').style.display='none';
-      startGame();
-    };
+    startGame(); // 即スタート
   });
 });
 </script>
