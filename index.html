@@ -154,7 +154,7 @@ window.addEventListener('resize', onResize);
 const cam = {
   tx: GW*TS/2, ty: 0, tz: GH*TS/2,
   yaw: 0.0,
-  pitch: 1.05,
+  pitch: Math.PI/2,
   dist: 105,
   fov: 600,
 };
@@ -163,7 +163,7 @@ const vel = { x:0, z:0 };
 
 function resetCam(){
   cam.tx=GW*TS/2; cam.ty=0; cam.tz=GH*TS/2;
-  cam.yaw=0; cam.pitch=1.05; cam.dist=105;
+  cam.yaw=0; cam.pitch=Math.PI/2; cam.dist=105;
   vel.x=vel.z=0;
 }
 
@@ -172,7 +172,8 @@ function project(wx, wy, wz){
   const cy = Math.cos(cam.yaw), sy = Math.sin(cam.yaw);
   const x1 = x*cy - z*sy, z1 = x*sy + z*cy;
   const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
-  const y2 = y*cp - z1*sp, z2 = y*sp + z1*cp;
+  // 手前(+z)が下&近く、奥(-z)が上&遠くになる回転
+  const y2 = y*cp + z1*sp, z2 = -y*sp + z1*cp;
   const zc = z2 + cam.dist;
   if (zc < 1) return null;
   const s = cam.fov / zc;
@@ -193,7 +194,7 @@ function groundPoint(sx, sy){
   const cy2 = Math.cos(cam.yaw), sy2 = Math.sin(cam.yaw);
   function invRot(x, y, z){
     // pitch逆回転 (X軸)
-    const y1 = y*cp + z*sp, z1 = -y*sp + z*cp;
+    const y1 = y*cp - z*sp, z1 = y*sp + z*cp;
     // yaw逆回転 (Y軸)
     const x2 = x*cy2 + z1*sy2, z2 = -x*sy2 + z1*cy2;
     return [x2, y1, z2];
@@ -816,7 +817,7 @@ function groundPointAtY(sx,sy,h){
   const cp=Math.cos(cam.pitch), sp=Math.sin(cam.pitch);
   const cy=Math.cos(cam.yaw), sy2=Math.sin(cam.yaw);
   function invRot(x,y,z){
-    const y1=y*cp+z*sp, z1=-y*sp+z*cp;
+    const y1=y*cp-z*sp, z1=y*sp+z*cp;
     const x2=x*cy+z1*sy2, z2=-x*sy2+z1*cy;
     return [x2,y1,z2];
   }
@@ -845,7 +846,7 @@ cv.addEventListener('mousedown',e=>{
   lastX=e.clientX; lastY=e.clientY;
   vel.x=vel.z=0;
   const r=cv.getBoundingClientRect();
-  if(e.button===2||e.button===1||e.ctrlKey){
+  if(e.button===2||e.button===1||e.ctrlKey||e.shiftKey){
     dragMode='rotate';
   } else {
     dragMode='pan';
@@ -862,7 +863,8 @@ addEventListener('mousemove',e=>{
 
   if(dragMode==='rotate'){
     cam.yaw += dx*0.008;
-    cam.pitch = Math.max(0.28, Math.min(1.55, cam.pitch - dy*0.006));
+    // 下→上ドラッグ(dy<0)で地図が奥に倒れる。真上(1.55)〜斜め(0.35)で裏返らない
+    cam.pitch = Math.max(0.35, Math.min(Math.PI/2, cam.pitch + dy*0.006));
   } else if(dragMode==='pan'&&grabPt){
     // 掴んだ地点がカーソル下に来るよう注視点を移動
     const r=cv.getBoundingClientRect();
