@@ -58,7 +58,7 @@ body { display: flex; font-family: 'MS Gothic', monospace; color: #e0d5c0; }
 <body>
 <div id="canvas-wrap">
   <canvas id="c"></canvas>
-  <div id="help">右ドラッグ/Ctrl+ドラッグ:視点回転 ｜ ホイール:ズーム ｜ WASD/矢印:移動 ｜ R:リセット ｜ 左クリック:選択</div>
+  <div id="help">ドラッグ:移動 ｜ 右ドラッグ/Ctrl+ドラッグ:視点回転 ｜ ホイール:ズーム ｜ R:リセット ｜ クリック:選択</div>
   <div id="overlay">
     <div id="ovbox">
       <h1 id="ov-title"></h1>
@@ -96,19 +96,19 @@ body { display: flex; font-family: 'MS Gothic', monospace; color: #e0d5c0; }
 <script>
 'use strict';
 // ════════════════════════════════════════════════════════════
-// 自前3Dエンジン (Canvas 2D) — 外部ライブラリ不要
+// 自前3Dエンジン (Canvas 2D) — なめらか地形 / Google Maps風操作
 // ════════════════════════════════════════════════════════════
 
 // ── 定数 ──
 const GW = 32, GH = 32, TS = 2.5;
 
 const TDATA = {
-  PLAIN:  { name:'平野',  col:[90,138,58],  mc:1.0,  def:0  },
-  RICE:   { name:'田んぼ',col:[138,170,58], mc:1.2,  def:-1 },
-  FOREST: { name:'林',    col:[45,92,45],   mc:2.0,  def:2  },
-  SWAMP:  { name:'湿地',  col:[58,90,42],   mc:3.0,  def:-1 },
-  RIVER:  { name:'川',    col:[58,106,170], mc:99.0, def:0  },
-  HILL:   { name:'丘',    col:[122,106,74], mc:1.5,  def:3  },
+  PLAIN:  { name:'平野',  mc:1.0,  def:0  },
+  RICE:   { name:'田んぼ',mc:1.2,  def:-1 },
+  FOREST: { name:'林',    mc:2.0,  def:2  },
+  SWAMP:  { name:'湿地',  mc:3.0,  def:-1 },
+  RIVER:  { name:'川',    mc:99.0, def:0  },
+  HILL:   { name:'丘',    mc:1.5,  def:3  },
 };
 
 const UDATA = {
@@ -131,6 +131,11 @@ const DNAMES = ['北','北東','東','南東','南','南西','西','北西'];
 let terrain=[], hmap=[], units=[], cmdI=0;
 let turnNum=1, phase='player', sel=null, curAct=null, hlTiles=[], over=false;
 
+// 描画用: 頂点単位の連続データ (GW+1 × GH+1)
+let vh=[];    // 頂点高さ
+let vn=[];    // 頂点ノイズ値 (色ブレンド用)
+let vm=[];    // 頂点湿度ノイズ (色のゆらぎ用)
+
 // ── キャンバス ──
 const wrap = document.getElementById('canvas-wrap');
 const cv = document.getElementById('c');
@@ -145,34 +150,66 @@ function onResize(){
 }
 window.addEventListener('resize', onResize);
 
-// ── カメラ（オービット） ──
+// ── カメラ（オービット + Google Maps風） ──
 const cam = {
-  tx: GW*TS/2, ty: 0, tz: GH*TS/2,  // 注視点
-  yaw: 0.0,           // 水平回転
-  pitch: 1.05,        // 見下ろし角 (rad)
-  dist: 105,          // 距離
-  fov: 600,           // 焦点距離(px)
+  tx: GW*TS/2, ty: 0, tz: GH*TS/2,
+  yaw: 0.0,
+  pitch: 1.05,
+  dist: 105,
+  fov: 600,
 };
-function resetCam(){ cam.tx=GW*TS/2; cam.ty=0; cam.tz=GH*TS/2; cam.yaw=0; cam.pitch=1.05; cam.dist=105; }
+// 慣性用
+const vel = { x:0, z:0 };
 
-// ワールド座標→スクリーン座標。戻り値 {x,y,d} d=カメラ距離(depth)。後ろならnull
+function resetCam(){
+  cam.tx=GW*TS/2; cam.ty=0; cam.tz=GH*TS/2;
+  cam.yaw=0; cam.pitch=1.05; cam.dist=105;
+  vel.x=vel.z=0;
+}
+
 function project(wx, wy, wz){
-  // 注視点中心へ
   let x = wx - cam.tx, y = wy - cam.ty, z = wz - cam.tz;
-  // yaw回転 (Y軸)
   const cy = Math.cos(cam.yaw), sy = Math.sin(cam.yaw);
-  let x1 = x*cy - z*sy, z1 = x*sy + z*cy;
-  // pitch回転 (X軸)
+  const x1 = x*cy - z*sy, z1 = x*sy + z*cy;
   const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
-  let y2 = y*cp - z1*sp, z2 = y*sp + z1*cp;
-  // カメラはz2軸負方向の dist 位置から見る → 視点座標系での奥行
+  const y2 = y*cp - z1*sp, z2 = y*sp + z1*cp;
   const zc = z2 + cam.dist;
   if (zc < 1) return null;
   const s = cam.fov / zc;
   return { x: CW/2 + x1*s, y: CH/2 - y2*s, d: zc };
 }
 
-// ── ノイズ・地形生成 ──
+// スクリーン座標 → 地面(y=0)上のワールド座標（逆投影）
+function groundPoint(sx, sy){
+  // カメラ空間でのレイ: depth=1 の点
+  const cx = (sx - CW/2) / cam.fov;
+  const cyy = -(sy - CH/2) / cam.fov;
+  // カメラ空間の2点: 原点(視点)と方向
+  // 視点はカメラ空間で z2=-dist の位置が原点なので、レイ: P(t) = eye + t*dir
+  // カメラ空間: eye=(0,0,-dist), 点(cx*zc, cyy*zc, zc-dist) for zc
+  // dir(カメラ空間) = (cx, cyy, 1)
+  // 逆回転してワールドへ
+  const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
+  const cy2 = Math.cos(cam.yaw), sy2 = Math.sin(cam.yaw);
+  function invRot(x, y, z){
+    // pitch逆回転 (X軸)
+    const y1 = y*cp + z*sp, z1 = -y*sp + z*cp;
+    // yaw逆回転 (Y軸)
+    const x2 = x*cy2 + z1*sy2, z2 = -x*sy2 + z1*cy2;
+    return [x2, y1, z2];
+  }
+  const eyeC = [0, 0, -cam.dist];
+  const dirC = [cx, cyy, 1];
+  const eW = invRot(eyeC[0], eyeC[1], eyeC[2]);
+  const dW = invRot(dirC[0], dirC[1], dirC[2]);
+  const ex = eW[0]+cam.tx, ey = eW[1]+cam.ty, ez = eW[2]+cam.tz;
+  if (Math.abs(dW[1]) < 1e-6) return null;
+  const t = -ey / dW[1];
+  if (t < 0) return null;
+  return { x: ex + dW[0]*t, z: ez + dW[2]*t };
+}
+
+// ── ノイズ ──
 function n2d(x,y,s){const v=Math.sin(x*127.1+y*311.7+s)*43758.5453;return v-Math.floor(v);}
 function sn(x,y,s){const ix=Math.floor(x),iy=Math.floor(y),fx=x-ix,fy=y-iy;
   const ux=fx*fx*(3-2*fx),uy=fy*fy*(3-2*fy);
@@ -180,27 +217,93 @@ function sn(x,y,s){const ix=Math.floor(x),iy=Math.floor(y),fx=x-ix,fy=y-iy;
   return a+(b-a)*ux+(c-a)*uy+(d+a-b-c)*ux*uy;}
 function fbm(x,y,s){let v=0,a=.5,f=1,m=0;for(let i=0;i<5;i++){v+=a*sn(x*f,y*f,s+i*17);m+=a;a*=.5;f*=2;}return v/m;}
 
+// 連続高さ関数: 水面以下は浅くえぐれ、丘はなだらかに盛り上がる
+function heightFn(n){
+  if(n < 0.30) return -0.6 + (n/0.30)*0.4;     // 川底
+  const t = (n - 0.30) / 0.70;
+  return t*t*9.0;                                // なだらかな増加
+}
+
 function genTerrain(){
-  terrain=[]; hmap=[];
+  terrain=[]; hmap=[]; vh=[]; vn=[]; vm=[];
   const seed=Math.floor(Math.random()*9999);
+  const seed2=seed+555;
+
+  // 頂点データ (GW+1)×(GH+1)
+  for(let z=0;z<=GH;z++){
+    vh[z]=[]; vn[z]=[]; vm[z]=[];
+    for(let x=0;x<=GW;x++){
+      const n=fbm(x/GW*4, z/GH*4, seed);
+      vn[z][x]=n;
+      vh[z][x]=heightFn(n);
+      vm[z][x]=fbm(x/GW*7+9, z/GH*7+9, seed2);  // 色ゆらぎ
+    }
+  }
+
+  // ゲームロジック用タイル分類（タイル中心のノイズ値）
   for(let z=0;z<GH;z++){
     terrain[z]=[]; hmap[z]=[];
     for(let x=0;x<GW;x++){
-      const h=fbm(x/GW*4, z/GH*4, seed);
-      let tp, th;
-      if(h<0.30){tp='RIVER'; th=-0.4;}
-      else if(h<0.38){tp='SWAMP'; th=h*0.5;}
-      else if(h<0.48){tp='RICE';  th=h*0.8;}
-      else if(h<0.62){tp='PLAIN'; th=h*2.0;}
-      else if(h<0.72){tp='FOREST';th=h*3.5;}
-      else           {tp='HILL';  th=h*6.0;}
-      terrain[z][x]=tp; hmap[z][x]=th;
+      const n=(vn[z][x]+vn[z][x+1]+vn[z+1][x]+vn[z+1][x+1])/4;
+      const m=(vm[z][x]+vm[z][x+1]+vm[z+1][x]+vm[z+1][x+1])/4;
+      let tp;
+      if(n<0.30) tp='RIVER';
+      else if(n<0.37) tp='SWAMP';
+      else if(n<0.46) tp=(m>0.5?'RICE':'PLAIN');
+      else if(n<0.62) tp='PLAIN';
+      else if(n<0.72) tp=(m>0.45?'FOREST':'PLAIN');
+      else tp='HILL';
+      terrain[z][x]=tp;
+      hmap[z][x]=(vh[z][x]+vh[z][x+1]+vh[z+1][x]+vh[z+1][x+1])/4;
     }
   }
 }
-function tileH(x,z){
-  if(x<0||z<0||x>=GW||z>=GH) return 0;
-  return Math.max(0, hmap[z][x]+0.4);
+
+// ワールド座標の地表高さ（バイリニア補間）
+function groundH(wx, wz){
+  const fx=wx/TS, fz=wz/TS;
+  const x0=Math.max(0,Math.min(GW-1,Math.floor(fx)));
+  const z0=Math.max(0,Math.min(GH-1,Math.floor(fz)));
+  const tx=Math.max(0,Math.min(1,fx-x0)), tz=Math.max(0,Math.min(1,fz-z0));
+  const a=vh[z0][x0], b=vh[z0][x0+1], c=vh[z0+1][x0], d=vh[z0+1][x0+1];
+  return a*(1-tx)*(1-tz)+b*tx*(1-tz)+c*(1-tx)*tz+d*tx*tz;
+}
+function tileCH(x,z){ // タイル中心の地表高さ
+  return groundH(x*TS+TS/2, z*TS+TS/2);
+}
+
+// ── 色（連続グラデーション） ──
+// ノイズ値→色をなめらかにブレンド
+const CSTOPS = [
+  { n:0.00, col:[40, 80, 150] },   // 深い川
+  { n:0.28, col:[70, 120, 175] },  // 浅瀬
+  { n:0.315,col:[105,130, 75] },   // 岸・湿地
+  { n:0.38, col:[120,150, 70] },   // 低地草原
+  { n:0.46, col:[100,145, 62] },   // 草原
+  { n:0.58, col:[85, 130, 55] },   // 高めの草原
+  { n:0.68, col:[80, 105, 60] },   // 山裾
+  { n:0.78, col:[125,110, 80] },   // 丘
+  { n:1.00, col:[160,150,125] },   // 高丘
+];
+function baseCol(n, m){
+  let c;
+  for(let i=0;i<CSTOPS.length-1;i++){
+    if(n<=CSTOPS[i+1].n){
+      const a=CSTOPS[i], b=CSTOPS[i+1];
+      const t=(n-a.n)/(b.n-a.n);
+      c=[a.col[0]+(b.col[0]-a.col[0])*t,
+         a.col[1]+(b.col[1]-a.col[1])*t,
+         a.col[2]+(b.col[2]-a.col[2])*t];
+      break;
+    }
+  }
+  if(!c) c=CSTOPS[CSTOPS.length-1].col.slice();
+  // 湿度ノイズで色をゆらす（水以外）
+  if(n>0.30){
+    const f=0.88+m*0.24;
+    c=[c[0]*f, c[1]*f, c[2]*f];
+  }
+  return c;
 }
 
 // ── ユニット ──
@@ -360,22 +463,18 @@ function enemyTurn(){
     if(!players.length){ chkVic(); return; }
     let near=players[0];
     for(const p of players) if(mdist(e,p)<mdist(e,near)) near=p;
-    // 向きを変える
     const dx=near.gx-e.gx, dz=near.gz-e.gz;
     e.facing=Math.round((Math.atan2(dx,-dz)/(Math.PI*2)*8)+8)%8;
-    // 射撃
     if(UDATA[e.type].sr){
       const st=shootTargets(e);
       if(st.length){doAtk(e,st[0]);chkVic();setTimeout(step,250);return;}
     }
-    // 白兵
     const at=atkTargets(e);
     if(at.length){
       let best=at[0],bm=facingMult(e,at[0]);
       for(const t of at){const m=facingMult(e,t);if(m>bm){bm=m;best=t;}}
       doAtk(e,best);chkVic();setTimeout(step,250);return;
     }
-    // 移動
     const mv=reachable(e);
     if(mv.length){
       let bt=mv[0],bs=Infinity;
@@ -470,40 +569,41 @@ function showOv(t,m){
 }
 
 // ── 描画 ──
-function shade(col, f){
-  return `rgb(${Math.min(255,col[0]*f)|0},${Math.min(255,col[1]*f)|0},${Math.min(255,col[2]*f)|0})`;
-}
+// 光源（正規化済み方向: 上からやや斜め）
+const LIGHT = (()=>{ const l=[0.45,0.8,0.35], m=Math.hypot(...l); return l.map(v=>v/m); })();
 
 function render(){
-  ctx.fillStyle='#1a2535';
+  // 空グラデーション
+  const grad=ctx.createLinearGradient(0,0,0,CH);
+  grad.addColorStop(0,'#2a3a52');
+  grad.addColorStop(1,'#16202e');
+  ctx.fillStyle=grad;
   ctx.fillRect(0,0,CW,CH);
 
-  // 描画アイテム収集（タイル＋ユニット）して奥行きソート
   const items=[];
 
+  // 地形クワッド
   for(let z=0;z<GH;z++) for(let x=0;x<GW;x++){
-    const h=tileH(x,z);
-    const x0=x*TS, x1=(x+1)*TS, z0=z*TS, z1=(z+1)*TS;
-    // 上面4頂点
-    const p00=project(x0,h,z0), p10=project(x1,h,z0),
-          p11=project(x1,h,z1), p01=project(x0,h,z1);
+    const p00=project(x*TS,     vh[z][x],     z*TS),
+          p10=project((x+1)*TS, vh[z][x+1],   z*TS),
+          p11=project((x+1)*TS, vh[z+1][x+1], (z+1)*TS),
+          p01=project(x*TS,     vh[z+1][x],   (z+1)*TS);
     if(!p00||!p10||!p11||!p01) continue;
-    // 中心の奥行き
     const cd=(p00.d+p10.d+p11.d+p01.d)/4;
-    items.push({d:cd, type:'tile', x, z, h, p00, p10, p11, p01});
+    items.push({d:cd, type:'tile', x, z, p00, p10, p11, p01});
   }
 
+  // ユニット
   for(const u of units){
     if(u.hp<=0) continue;
-    const wx=u.gx*TS+TS/2, wz=u.gz*TS+TS/2, h=tileH(u.gx,u.gz);
+    const wx=u.gx*TS+TS/2, wz=u.gz*TS+TS/2;
+    const h=Math.max(0, tileCH(u.gx,u.gz));
     const pc=project(wx,h,wz);
     if(!pc) continue;
-    items.push({d:pc.d-0.6, type:'unit', u, wx, wz, h});
+    items.push({d:pc.d-1.2, type:'unit', u, wx, wz, h});
   }
 
-  // 奥から手前へ
   items.sort((a,b)=>b.d-a.d);
-
   for(const it of items){
     if(it.type==='tile') drawTile(it);
     else drawUnit(it);
@@ -511,62 +611,56 @@ function render(){
 }
 
 function drawTile(it){
-  const {x,z,h,p00,p10,p11,p01}=it;
-  const col=TDATA[terrain[z][x]].col;
-  // 高さで明るさ変化
-  const br=0.75+h*0.06;
+  const {x,z,p00,p10,p11,p01}=it;
+  // 頂点平均のノイズと湿度で基本色
+  const n=(vn[z][x]+vn[z][x+1]+vn[z+1][x]+vn[z+1][x+1])/4;
+  const m=(vm[z][x]+vm[z][x+1]+vm[z+1][x]+vm[z+1][x+1])/4;
+  let col=baseCol(n,m);
 
-  // 側面（高さがあれば）— 底面の頂点
-  if(h>0.05){
-    const b00=project(x*TS,0,z*TS), b10=project((x+1)*TS,0,z*TS),
-          b11=project((x+1)*TS,0,(z+1)*TS), b01=project(x*TS,0,(z+1)*TS);
-    if(b00&&b10&&b11&&b01){
-      // 南面 (z+1側)
-      ctx.fillStyle=shade(col,br*0.55);
-      ctx.beginPath();
-      ctx.moveTo(p01.x,p01.y);ctx.lineTo(p11.x,p11.y);
-      ctx.lineTo(b11.x,b11.y);ctx.lineTo(b01.x,b01.y);
-      ctx.closePath();ctx.fill();
-      // 東面 (x+1側)
-      ctx.fillStyle=shade(col,br*0.4);
-      ctx.beginPath();
-      ctx.moveTo(p10.x,p10.y);ctx.lineTo(p11.x,p11.y);
-      ctx.lineTo(b11.x,b11.y);ctx.lineTo(b10.x,b10.y);
-      ctx.closePath();ctx.fill();
-      // 西面・北面（回転時に見える）
-      ctx.fillStyle=shade(col,br*0.45);
-      ctx.beginPath();
-      ctx.moveTo(p00.x,p00.y);ctx.lineTo(p01.x,p01.y);
-      ctx.lineTo(b01.x,b01.y);ctx.lineTo(b00.x,b00.y);
-      ctx.closePath();ctx.fill();
-      ctx.fillStyle=shade(col,br*0.5);
-      ctx.beginPath();
-      ctx.moveTo(p00.x,p00.y);ctx.lineTo(p10.x,p10.y);
-      ctx.lineTo(b10.x,b10.y);ctx.lineTo(b00.x,b00.y);
-      ctx.closePath();ctx.fill();
-    }
-  }
+  // 法線によるライティング（斜面の陰影）
+  // クワッドの対角ベクトルの外積
+  const ax=TS, ay=vh[z+1][x+1]-vh[z][x], az=TS;
+  const bx=TS, by=vh[z][x+1]-vh[z+1][x], bz=-TS;
+  let nx=ay*bz-az*by, ny=az*bx-ax*bz, nz2=ax*by-ay*bx;
+  const nl=Math.hypot(nx,ny,nz2)||1;
+  nx/=nl; ny/=nl; nz2/=nl;
+  if(ny<0){nx=-nx;ny=-ny;nz2=-nz2;}
+  let li=nx*LIGHT[0]+ny*LIGHT[1]+nz2*LIGHT[2];
+  li=Math.max(0.45, Math.min(1.25, 0.35+li*0.85));
 
-  // 上面
-  ctx.fillStyle=shade(col,br);
+  ctx.fillStyle=`rgb(${col[0]*li|0},${col[1]*li|0},${col[2]*li|0})`;
   ctx.beginPath();
   ctx.moveTo(p00.x,p00.y);ctx.lineTo(p10.x,p10.y);
   ctx.lineTo(p11.x,p11.y);ctx.lineTo(p01.x,p01.y);
-  ctx.closePath();ctx.fill();
-  ctx.strokeStyle='rgba(0,0,0,0.12)';
-  ctx.lineWidth=0.5;
+  ctx.closePath();
+  ctx.fill();
+  // 隣接タイルとの継ぎ目を消すため同色で輪郭も塗る
+  ctx.strokeStyle=ctx.fillStyle;
+  ctx.lineWidth=1;
   ctx.stroke();
 
-  // 林の木
+  // 田んぼの畝模様
+  if(terrain[z][x]==='RICE'){
+    ctx.strokeStyle='rgba(60,90,30,0.25)';
+    ctx.lineWidth=0.8;
+    for(let i=1;i<3;i++){
+      const t=i/3;
+      const ax2=p00.x+(p01.x-p00.x)*t, ay2=p00.y+(p01.y-p00.y)*t;
+      const bx2=p10.x+(p11.x-p10.x)*t, by2=p10.y+(p11.y-p10.y)*t;
+      ctx.beginPath();ctx.moveTo(ax2,ay2);ctx.lineTo(bx2,by2);ctx.stroke();
+    }
+  }
+
+  // 林の木（数本の小さい丸）
   if(terrain[z][x]==='FOREST'){
-    const tw=project(x*TS+TS/2, h+1.2, z*TS+TS/2);
-    const tb=project(x*TS+TS/2, h, z*TS+TS/2);
-    if(tw&&tb){
-      const r=(tb.y-tw.y)*0.55;
-      if(r>1){
-        ctx.fillStyle='#1d4a1d';
-        ctx.beginPath();ctx.arc(tw.x,tw.y,r,0,Math.PI*2);ctx.fill();
-      }
+    const cx2=(p00.x+p11.x)/2, cy2=(p00.y+p11.y)/2;
+    const sc=Math.max(1.2, 230/it.d);
+    ctx.fillStyle='rgba(28,66,30,0.85)';
+    const offs=[[-0.3,-0.15],[0.25,0.1],[-0.05,0.3],[0.1,-0.3]];
+    for(const o of offs){
+      ctx.beginPath();
+      ctx.arc(cx2+o[0]*sc*4, cy2+o[1]*sc*4, sc*1.6, 0, Math.PI*2);
+      ctx.fill();
     }
   }
 
@@ -574,8 +668,8 @@ function drawTile(it){
   const hl=hlTiles.find(t=>t.gx===x&&t.gz===z);
   const isSel=sel&&sel.gx===x&&sel.gz===z;
   if(hl||isSel){
-    const colm={mv:'rgba(50,90,255,0.45)',at:'rgba(255,30,30,0.5)',sh:'rgba(255,140,0,0.5)'};
-    ctx.fillStyle=isSel&&!hl?'rgba(255,255,0,0.4)':colm[hl.t];
+    const colm={mv:'rgba(60,110,255,0.4)',at:'rgba(255,40,40,0.45)',sh:'rgba(255,150,0,0.45)'};
+    ctx.fillStyle=(isSel&&!hl)?'rgba(255,255,80,0.35)':colm[hl.t];
     ctx.beginPath();
     ctx.moveTo(p00.x,p00.y);ctx.lineTo(p10.x,p10.y);
     ctx.lineTo(p11.x,p11.y);ctx.lineTo(p01.x,p01.y);
@@ -594,10 +688,9 @@ function drawUnit(it){
   } else {
     body=[205,40,40]; dark=[140,25,25];
   }
+  function shade(c,f){return `rgb(${Math.min(255,c[0]*f)|0},${Math.min(255,c[1]*f)|0},${Math.min(255,c[2]*f)|0})`;}
 
-  // 凸ボディ: 底箱 (1.6 x 0.9 x 1.6) + 上ノブ
   const bw=0.8, bh=0.9, kw=0.35, kh=0.45;
-  // 8頂点（底箱）
   const c=[
     project(wx-bw,h,wz-bw), project(wx+bw,h,wz-bw),
     project(wx+bw,h,wz+bw), project(wx-bw,h,wz+bw),
@@ -612,26 +705,20 @@ function drawUnit(it){
     ctx.moveTo(a.x,a.y);ctx.lineTo(b2.x,b2.y);
     ctx.lineTo(c2.x,c2.y);ctx.lineTo(d2.x,d2.y);
     ctx.closePath();ctx.fill();
-    ctx.strokeStyle='rgba(0,0,0,0.35)';ctx.lineWidth=0.7;ctx.stroke();
+    ctx.strokeStyle='rgba(0,0,0,0.3)';ctx.lineWidth=0.6;ctx.stroke();
   }
 
-  // 側面4面（奥→手前ソートのため全部描いても painter's でOK; 平均奥行きで2面ずつ）
   const faces=[
-    {pts:[c[0],c[1],c[5],c[4]], col:dark},  // 北
-    {pts:[c[1],c[2],c[6],c[5]], col:dark},  // 東
-    {pts:[c[2],c[3],c[7],c[6]], col:dark},  // 南
-    {pts:[c[3],c[0],c[4],c[7]], col:dark},  // 西
+    {pts:[c[0],c[1],c[5],c[4]]},{pts:[c[1],c[2],c[6],c[5]]},
+    {pts:[c[2],c[3],c[7],c[6]]},{pts:[c[3],c[0],c[4],c[7]]},
   ];
   faces.sort((a,b2)=>{
     const da=a.pts.reduce((s,p)=>s+p.d,0), db=b2.pts.reduce((s,p)=>s+p.d,0);
     return db-da;
   });
-  for(const f of faces) quad(f.pts[0],f.pts[1],f.pts[2],f.pts[3],shade(f.col,1));
-
-  // 上面
+  for(const f of faces) quad(f.pts[0],f.pts[1],f.pts[2],f.pts[3],shade(dark,1));
   quad(c[4],c[5],c[6],c[7],shade(body,1));
 
-  // 凸ノブ
   const k=[
     project(wx-kw,h+bh,wz-kw), project(wx+kw,h+bh,wz-kw),
     project(wx+kw,h+bh,wz+kw), project(wx-kw,h+bh,wz+kw),
@@ -651,14 +738,15 @@ function drawUnit(it){
     quad(k[4],k[5],k[6],k[7],shade(body,1.15));
   }
 
-  // 向き矢印（地面に三角形）
-  const ang=(u.facing/8)*Math.PI*2; // 0=北(-z)
+  // 向き矢印
+  const ang=(u.facing/8)*Math.PI*2;
   const fx=Math.sin(ang), fz=-Math.cos(ang);
   const ax=wx+fx*1.6, az=wz+fz*1.6;
   const lx=-fz, lz=fx;
-  const t1=project(ax+fx*0.5, h+0.06, az+fz*0.5);
-  const t2=project(ax-fx*0.3+lx*0.45, h+0.06, az-fz*0.3+lz*0.45);
-  const t3=project(ax-fx*0.3-lx*0.45, h+0.06, az-fz*0.3-lz*0.45);
+  const ah=groundH(ax,az)+0.08;
+  const t1=project(ax+fx*0.5, ah, az+fz*0.5);
+  const t2=project(ax-fx*0.3+lx*0.45, ah, az-fz*0.3+lz*0.45);
+  const t3=project(ax-fx*0.3-lx*0.45, ah, az-fz*0.3-lz*0.45);
   if(t1&&t2&&t3){
     ctx.fillStyle=isP?'rgba(130,200,255,0.95)':'rgba(255,140,140,0.95)';
     ctx.beginPath();
@@ -695,47 +783,52 @@ function drawUnit(it){
   }
 }
 
-// ── ピッキング（クリック位置→タイル） ──
+// ── ピッキング ──
 function pick(mx,my){
-  // ユニット優先: スクリーン距離で判定
   let bestU=null, bestD=24;
   for(const u of units){
     if(u.hp<=0) continue;
-    const p=project(u.gx*TS+TS/2, tileH(u.gx,u.gz)+0.8, u.gz*TS+TS/2);
+    const h=Math.max(0,tileCH(u.gx,u.gz));
+    const p=project(u.gx*TS+TS/2, h+0.8, u.gz*TS+TS/2);
     if(!p) continue;
     const d=Math.hypot(p.x-mx,p.y-my);
     if(d<bestD){bestD=d;bestU=u;}
   }
   if(bestU) return {gx:bestU.gx, gz:bestU.gz};
 
-  // タイル: 上面ポリゴン内判定を手前から
-  const cands=[];
-  for(let z=0;z<GH;z++) for(let x=0;x<GW;x++){
-    const h=tileH(x,z);
-    const p00=project(x*TS,h,z*TS), p10=project((x+1)*TS,h,z*TS),
-          p11=project((x+1)*TS,h,(z+1)*TS), p01=project(x*TS,h,(z+1)*TS);
-    if(!p00||!p10||!p11||!p01) continue;
-    if(ptInQuad(mx,my,p00,p10,p11,p01)){
-      cands.push({x,z,d:(p00.d+p11.d)/2});
-    }
+  // 地面交点から逆算（高さは反復で補正）
+  let g=groundPoint(mx,my);
+  if(!g) return null;
+  // 高さを考慮して2回補正
+  for(let i=0;i<3;i++){
+    const h=groundH(g.x,g.z);
+    const g2=groundPointAtY(mx,my,h);
+    if(!g2) break;
+    g=g2;
   }
-  if(cands.length){
-    cands.sort((a,b)=>a.d-b.d);
-    return {gx:cands[0].x, gz:cands[0].z};
+  const gx=Math.floor(g.x/TS), gz=Math.floor(g.z/TS);
+  if(gx<0||gz<0||gx>=GW||gz>=GH) return null;
+  return {gx,gz};
+}
+// y=h平面との交点
+function groundPointAtY(sx,sy,h){
+  const cx=(sx-CW/2)/cam.fov, cyy=-(sy-CH/2)/cam.fov;
+  const cp=Math.cos(cam.pitch), sp=Math.sin(cam.pitch);
+  const cy=Math.cos(cam.yaw), sy2=Math.sin(cam.yaw);
+  function invRot(x,y,z){
+    const y1=y*cp+z*sp, z1=-y*sp+z*cp;
+    const x2=x*cy+z1*sy2, z2=-x*sy2+z1*cy;
+    return [x2,y1,z2];
   }
-  return null;
-}
-function ptInQuad(px,py,a,b,c,d){
-  return ptInTri(px,py,a,b,c)||ptInTri(px,py,a,c,d);
-}
-function ptInTri(px,py,a,b,c){
-  const s1=(b.x-a.x)*(py-a.y)-(b.y-a.y)*(px-a.x);
-  const s2=(c.x-b.x)*(py-b.y)-(c.y-b.y)*(px-b.x);
-  const s3=(a.x-c.x)*(py-c.y)-(a.y-c.y)*(px-c.x);
-  return (s1>=0&&s2>=0&&s3>=0)||(s1<=0&&s2<=0&&s3<=0);
+  const eW=invRot(0,0,-cam.dist), dW=invRot(cx,cyy,1);
+  const ex=eW[0]+cam.tx, ey=eW[1]+cam.ty, ez=eW[2]+cam.tz;
+  if(Math.abs(dW[1])<1e-6) return null;
+  const t=(h-ey)/dW[1];
+  if(t<0) return null;
+  return {x:ex+dW[0]*t, z:ez+dW[2]*t};
 }
 
-// ── 入力 ──
+// ── 入力（Google Maps風） ──
 const keys=new Set();
 addEventListener('keydown',e=>{
   keys.add(e.key.toLowerCase());
@@ -743,41 +836,75 @@ addEventListener('keydown',e=>{
 });
 addEventListener('keyup',e=>keys.delete(e.key.toLowerCase()));
 
-let dragging=false, dragBtn=0, lastX=0, lastY=0, moved=false;
+let dragging=false, dragMode=null, lastX=0, lastY=0, moved=false;
+let grabPt=null;          // パン: 掴んだ地面の点
+let lastMoveT=0, lastDX=0, lastDZ=0;
+
 cv.addEventListener('mousedown',e=>{
-  dragging=true; dragBtn=e.button; lastX=e.clientX; lastY=e.clientY; moved=false;
+  dragging=true; moved=false;
+  lastX=e.clientX; lastY=e.clientY;
+  vel.x=vel.z=0;
+  const r=cv.getBoundingClientRect();
+  if(e.button===2||e.button===1||e.ctrlKey){
+    dragMode='rotate';
+  } else {
+    dragMode='pan';
+    grabPt=groundPoint(e.clientX-r.left, e.clientY-r.top);
+  }
   cv.classList.add('dragging');
 });
+
 addEventListener('mousemove',e=>{
   if(!dragging) return;
   const dx=e.clientX-lastX, dy=e.clientY-lastY;
   if(Math.abs(dx)+Math.abs(dy)>3) moved=true;
   lastX=e.clientX; lastY=e.clientY;
-  if(dragBtn===2||dragBtn===1||e.ctrlKey){
-    // 視点回転
+
+  if(dragMode==='rotate'){
     cam.yaw += dx*0.008;
-    cam.pitch = Math.max(0.25, Math.min(1.45, cam.pitch + dy*0.006));
-  } else if(moved){
-    // 左ドラッグはパン
-    const s=cam.dist/600;
-    const cy=Math.cos(cam.yaw), sy=Math.sin(cam.yaw);
-    cam.tx -= (dx*cy - dy*sy)*s;
-    cam.tz -= (dx*sy + dy*cy)*s;
+    cam.pitch = Math.max(0.3, Math.min(1.5, cam.pitch + dy*0.006));
+  } else if(dragMode==='pan'&&grabPt){
+    // 掴んだ地点がカーソル下に来るよう注視点を移動
+    const r=cv.getBoundingClientRect();
+    const cur=groundPoint(e.clientX-r.left, e.clientY-r.top);
+    if(cur){
+      const ddx=grabPt.x-cur.x, ddz=grabPt.z-cur.z;
+      cam.tx+=ddx; cam.tz+=ddz;
+      // 慣性用に記録
+      lastDX=ddx; lastDZ=ddz; lastMoveT=performance.now();
+    }
   }
 });
+
 addEventListener('mouseup',e=>{
-  if(dragging&&!moved&&dragBtn===0){
+  if(dragging&&!moved&&dragMode==='pan'){
     const r=cv.getBoundingClientRect();
     const hit=pick(e.clientX-r.left, e.clientY-r.top);
     if(hit) tileClick(hit.gx, hit.gz);
   }
-  dragging=false;
+  // 慣性: 直前の動きを引き継ぐ
+  if(dragging&&dragMode==='pan'&&moved){
+    const dt=performance.now()-lastMoveT;
+    if(dt<60){ vel.x=lastDX*0.85; vel.z=lastDZ*0.85; }
+  }
+  dragging=false; dragMode=null; grabPt=null;
   cv.classList.remove('dragging');
 });
+
 cv.addEventListener('contextmenu',e=>e.preventDefault());
+
+// ホイール: カーソル位置に向かってズーム
 cv.addEventListener('wheel',e=>{
   e.preventDefault();
-  cam.dist=Math.max(15,Math.min(200,cam.dist*(e.deltaY>0?1.1:0.9)));
+  const r=cv.getBoundingClientRect();
+  const mx=e.clientX-r.left, my=e.clientY-r.top;
+  const before=groundPoint(mx,my);
+  cam.dist=Math.max(12,Math.min(220,cam.dist*(e.deltaY>0?1.12:0.89)));
+  const after=groundPoint(mx,my);
+  if(before&&after){
+    cam.tx+=before.x-after.x;
+    cam.tz+=before.z-after.z;
+  }
 },{passive:false});
 
 function camKeys(){
@@ -787,6 +914,19 @@ function camKeys(){
   if(keys.has('s')||keys.has('arrowdown')){cam.tx-=sy*s;cam.tz+=cy*s;}
   if(keys.has('a')||keys.has('arrowleft')){cam.tx-=cy*s;cam.tz-=sy*s;}
   if(keys.has('d')||keys.has('arrowright')){cam.tx+=cy*s;cam.tz+=sy*s;}
+}
+
+// 慣性の適用と減衰
+function applyInertia(){
+  if(dragging) return;
+  if(Math.abs(vel.x)>0.005||Math.abs(vel.z)>0.005){
+    cam.tx+=vel.x; cam.tz+=vel.z;
+    vel.x*=0.92; vel.z*=0.92;
+  } else { vel.x=vel.z=0; }
+  // 注視点をマップ周辺に制限
+  const mgn=20;
+  cam.tx=Math.max(-mgn,Math.min(GW*TS+mgn,cam.tx));
+  cam.tz=Math.max(-mgn,Math.min(GH*TS+mgn,cam.tz));
 }
 
 document.getElementById('b-mv').addEventListener('click',()=>setAct('mv'));
@@ -813,6 +953,7 @@ function startGame(){
 
 function loop(){
   camKeys();
+  applyInertia();
   render();
   requestAnimationFrame(loop);
 }
