@@ -103,22 +103,24 @@ body { display: flex; font-family: 'MS Gothic', monospace; color: #e0d5c0; }
 const GW = 32, GH = 32, TS = 2.5;
 
 const TDATA = {
-  PLAIN:  { name:'平野',  mc:1.0,  def:0  },
-  RICE:   { name:'田んぼ',mc:1.2,  def:-1 },
-  FOREST: { name:'林',    mc:2.0,  def:2  },
-  SWAMP:  { name:'湿地',  mc:3.0,  def:-1 },
-  RIVER:  { name:'川',    mc:99.0, def:0  },
-  HILL:   { name:'丘',    mc:1.5,  def:3  },
+  // name, mc=移動コスト, atkM=攻撃倍率, defM=防御倍率, shM=射撃倍率
+  PLAIN:  { name:'平野',  mc:1.0,  atkM:1.0, defM:1.0, shM:1.0  },
+  RICE:   { name:'田んぼ',mc:1.5,  atkM:0.9, defM:0.9, shM:1.0  },
+  FOREST: { name:'林',    mc:2.0,  atkM:0.5, defM:1.5, shM:1.0  },
+  SWAMP:  { name:'湿地',  mc:3.0,  atkM:0.7, defM:0.8, shM:0.9  },
+  RIVER:  { name:'川',    mc:99.0, atkM:0.2, defM:0.5, shM:0.8  },
+  HILL:   { name:'丘',    mc:1.5,  atkM:1.0, defM:0.8, shM:1.0  },
 };
 
+// mv=移動力, atk=攻撃力, def=防御力, sh=射撃力, sr=射程
 const UDATA = {
-  HONJIN:   {name:'本陣',    sym:'本', hp:150, atk:12, def:15, mv:1, sr:0 },
-  CAVALRY:  {name:'騎馬',    sym:'馬', hp:90,  atk:20, def:8,  mv:4, sr:0 },
-  MIXED:    {name:'騎馬足軽', sym:'騎', hp:80,  atk:15, def:10, mv:3, sr:0 },
-  RIFLE:    {name:'鉄砲足軽', sym:'銃', hp:60,  atk:22, def:6,  mv:2, sr:5 },
-  BOW:      {name:'弓足軽',  sym:'弓', hp:65,  atk:14, def:7,  mv:2, sr:4 },
-  INFANTRY: {name:'足軽',    sym:'足', hp:70,  atk:12, def:8,  mv:2, sr:0 },
-  RABBLE:   {name:'烏合衆',  sym:'衆', hp:50,  atk:8,  def:4,  mv:2, sr:0 },
+  HONJIN:   {name:'本陣',   sym:'本', hp:200, atk:10, def:20, mv:7,  sh:12, sr:3 },
+  HATAMOTO: {name:'旗本',   sym:'旗', hp:150, atk:12, def:12, mv:12, sh:12, sr:3 },
+  CAVALRY:  {name:'騎馬',   sym:'馬', hp:120, atk:15, def:12, mv:20, sh:0,  sr:0 },
+  RIFLE:    {name:'鉄砲足軽',sym:'銃', hp:80,  atk:5,  def:7,  mv:7,  sh:25, sr:6 },
+  BOW:      {name:'弓足軽', sym:'弓', hp:80,  atk:5,  def:7,  mv:7,  sh:15, sr:5 },
+  INFANTRY: {name:'足軽',   sym:'足', hp:100, atk:8,  def:8,  mv:7,  sh:2,  sr:2 },
+  RABBLE:   {name:'烏合衆', sym:'衆', hp:60,  atk:5,  def:5,  mv:5,  sh:0,  sr:0 },
 };
 
 const CMDS = ['織田信長','豊臣秀吉','徳川家康','武田信玄','上杉謙信',
@@ -320,7 +322,7 @@ function mkUnit(gx,gz,type,side,facing){
 }
 
 function placeUnits(){
-  const types=['HONJIN','CAVALRY','CAVALRY','RIFLE','RIFLE','BOW','INFANTRY','INFANTRY','INFANTRY','MIXED'];
+  const types=['HONJIN','HATAMOTO','CAVALRY','RIFLE','BOW','INFANTRY','INFANTRY','INFANTRY','RABBLE','RABBLE'];
   const used=new Set();
   function rnd(x0,x1,z0,z1){
     for(let i=0;i<300;i++){
@@ -377,30 +379,60 @@ function shootTargets(u){
 }
 
 // ── 戦闘 ──
-function facingMult(att,def){
+// 方向係数（防御側の正面から見た攻撃方向 → 守備側防御力の発揮率）
+// 正面1.0 / 斜め前0.9 / 横0.7 / 斜め後ろ0.4 / 背後0.3
+function facingDecay(att,def){
   const defAng=(def.facing/8)*Math.PI*2;
   const fromAng=Math.atan2(att.gx-def.gx, -(att.gz-def.gz));
   let rel=defAng-fromAng;
   while(rel>Math.PI) rel-=Math.PI*2;
   while(rel<-Math.PI) rel+=Math.PI*2;
-  if(Math.abs(rel)<Math.PI*.35) return 1.0;
-  if(Math.abs(rel)<Math.PI*.70) return 1.3;
-  return 1.8;
+  const a=Math.abs(rel);
+  if(a < Math.PI*0.20) return 1.0;  // 正面
+  if(a < Math.PI*0.45) return 0.9;  // 斜め前
+  if(a < Math.PI*0.65) return 0.7;  // 横
+  if(a < Math.PI*0.85) return 0.4;  // 斜め後ろ
+  return 0.3;                        // 背後
 }
-function htBonus(att,def){
-  return 1 + (hmap[att.gz][att.gx]-hmap[def.gz][def.gx])*.1;
+
+// 標高ボーナス: 下へ攻撃×1.2, 上へ攻撃×0.8
+function altMult(att,def){
+  const dh=hmap[att.gz][att.gx]-hmap[def.gz][def.gx];
+  if(dh> 0.5) return 1.2;
+  if(dh<-0.5) return 0.8;
+  return 1.0;
 }
-function doAtk(att,def){
-  const d=UDATA[att.type];
-  let dmg=d.atk*(0.8+Math.random()*.4);
-  const fm=facingMult(att,def), hb=htBonus(att,def);
-  const td=TDATA[terrain[def.gz][def.gx]].def;
-  dmg=Math.max(1,Math.floor(dmg*fm*hb*(def.defending?.5:1)-(UDATA[def.type].def+td)*.5));
-  def.hp=Math.max(0,def.hp-dmg);
-  def.morale=Math.max(0,def.morale-Math.floor(dmg*.3));
-  const tag=fm>1.5?'【背後！】':fm>1.2?'【側面！】':'';
-  const ht=hb>1.05?'〈高地〉':'';
-  log(`${att.cmd}→${def.cmd}: ${dmg}ダメージ${tag}${ht}`,'c');
+
+function doAtk(att, def, isRanged){
+  const da=UDATA[att.type], dd=UDATA[def.type];
+  const tDef=TDATA[terrain[def.gz][def.gx]];
+  const tAtt=TDATA[terrain[att.gz][att.gx]];
+
+  // 攻撃力（地形・標高）
+  const rawAtk = isRanged ? da.sh : da.atk;
+  const terrAtkM = isRanged ? tAtt.shM : tAtt.atkM;
+  const alt = altMult(att, def);
+  let atkPow = rawAtk * terrAtkM * alt * (0.85+Math.random()*0.3);
+
+  // 防御力（地形 × 方向減衰 × 防御態勢）
+  const decay  = isRanged ? 1.0 : facingDecay(att, def);
+  const stance = def.defending ? 1.5 : 1.0;
+  const defPow = dd.def * tDef.defM * decay * stance;
+
+  const dmg = Math.max(1, Math.floor(atkPow - defPow*0.5));
+
+  def.hp    = Math.max(0, def.hp - dmg);
+  def.morale= Math.max(0, def.morale - Math.floor(dmg*0.25));
+
+  const tags=[];
+  if(!isRanged){
+    if(decay<0.4) tags.push('背後攻撃');
+    else if(decay<0.8) tags.push('側面攻撃');
+  }
+  if(alt>1.1) tags.push('高地有利');
+  else if(alt<0.9) tags.push('高地不利');
+  const tagStr=tags.length?`【${tags.join('・')}】`:'';
+  log(`${att.cmd}→${def.cmd}: ${dmg}ダメージ${tagStr}`,'c');
   if(def.hp<=0) log(`${def.cmd}の部隊、壊滅！`,'c');
   updateUDisp();
 }
@@ -426,6 +458,7 @@ function tileClick(gx,gz){
     if(hlTiles.some(h=>h.gx===gx&&h.gz===gz&&h.t==='mv')){
       sel.gx=gx;sel.gz=gz;sel.acted=true;
       log(`${sel.cmd}が移動`,'m');
+      chkVic();
       curAct=null;hlTiles=[];updUI();return;
     }
   } else if(curAct==='at'&&sel){
@@ -506,12 +539,31 @@ function endTurn(){
   setTimeout(enemyTurn,300);
 }
 
+// マップ端（端から2マス以内）に本陣がいれば逃走判定
+function isHonjinFleeing(u){
+  if(u.type!=='HONJIN') return false;
+  const edge=2;
+  return u.gx<edge||u.gz<edge||u.gx>=GW-edge||u.gz>=GH-edge;
+}
+
 function chkVic(){
   if(over) return;
   const pa=units.filter(u=>u.hp>0&&u.side==='player');
   const ea=units.filter(u=>u.hp>0&&u.side==='enemy');
-  if(!ea.length){showOv('勝利！','敵軍を全滅させた！天下統一！');over=true;}
-  else if(!pa.length){showOv('敗北...','味方部隊が壊滅した。再起を期せ。');over=true;}
+
+  // 全滅
+  if(!ea.length){ showOv('勝利！','敵軍を全滅させた！天下統一！'); over=true; return; }
+  if(!pa.length){ showOv('敗北...','味方部隊が壊滅した。再起を期せ。'); over=true; return; }
+
+  // 本陣壊滅
+  const pHon=units.find(u=>u.type==='HONJIN'&&u.side==='player');
+  const eHon=units.find(u=>u.type==='HONJIN'&&u.side==='enemy');
+  if(!pHon||pHon.hp<=0){ showOv('敗北...','本陣が壊滅した。'); over=true; return; }
+  if(!eHon||eHon.hp<=0){ showOv('勝利！','敵の本陣を壊滅させた！'); over=true; return; }
+
+  // 本陣逃走（マップ端）
+  if(isHonjinFleeing(pHon)){ showOv('敗北...','本陣が戦場から逃走した…'); over=true; return; }
+  if(isHonjinFleeing(eHon)){ showOv('勝利！','敵の本陣が戦場から逃走した！'); over=true; return; }
 }
 
 // ── UI ──
