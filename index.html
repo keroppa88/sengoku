@@ -416,7 +416,7 @@ function doAtk(att, def, isRanged){
 
   // 防御力（地形 × 方向減衰 × 防御態勢）
   const decay  = isRanged ? 1.0 : facingDecay(att, def);
-  const stance = def.defending ? 1.5 : 1.0;
+  const stance = def.defending ? 2.0 : 1.0;
   const defPow = dd.def * tDef.defM * decay * stance;
 
   const dmg = Math.max(1, Math.floor(atkPow - defPow*0.5));
