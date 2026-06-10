@@ -465,10 +465,24 @@ function doAtk(att, def, isRanged){
 }
 
 // ── 行動 ──
+// 移動範囲から隣接攻撃できる敵（移動攻撃の対象）
+function moveAtkTargets(u, tiles){
+  const cells=[{x:u.gx,z:u.gz},...tiles];
+  return units.filter(o=>{
+    if(o.hp<=0||o.side===u.side) return false;
+    return cells.some(c=>Math.max(Math.abs(c.x-o.gx),Math.abs(c.z-o.gz))<=1);
+  });
+}
+
 function setAct(a){
   if(!sel||sel.acted||phase!=='player') return;
   curAct=a; hlTiles=[];
-  if(a==='mv') reachable(sel).forEach(t=>hlTiles.push({gx:t.x,gz:t.z,t:'mv'}));
+  if(a==='mv'){
+    const tiles=reachable(sel);
+    tiles.forEach(t=>hlTiles.push({gx:t.x,gz:t.z,t:'mv'}));
+    // 移動範囲に隣接する敵 = 移動攻撃可能
+    moveAtkTargets(sel,tiles).forEach(o=>hlTiles.push({gx:o.gx,gz:o.gz,t:'at'}));
+  }
   else if(a==='at') atkTargets(sel).forEach(u=>hlTiles.push({gx:u.gx,gz:u.gz,t:'at'}));
   else if(a==='sh') shootTargets(sel).forEach(u=>hlTiles.push({gx:u.gx,gz:u.gz,t:'sh'}));
   else if(a==='df'){
@@ -488,6 +502,27 @@ function tileClick(gx,gz){
       chkVic();
       curAct=null;hlTiles=[];updUI();return;
     }
+    // 敵ユニットに被せてクリック → 移動攻撃
+    if(cu&&cu.side!==sel.side&&hlTiles.some(h=>h.gx===gx&&h.gz===gz&&h.t==='at')){
+      // 敵に隣接する移動可能マスのうち、現在地から最も近い場所へ移動
+      if(Math.max(Math.abs(sel.gx-gx),Math.abs(sel.gz-gz))>1){
+        const tiles=reachable(sel);
+        let best=null,bd=Infinity;
+        for(const t of tiles){
+          if(Math.max(Math.abs(t.x-gx),Math.abs(t.z-gz))!==1) continue;
+          const d=Math.max(Math.abs(t.x-sel.gx),Math.abs(t.z-sel.gz));
+          if(d<bd){bd=d;best=t;}
+        }
+        if(!best) return;
+        sel.gx=best.x; sel.gz=best.z;
+        log(`${sel.cmd}が突撃移動`,'m');
+      }
+      // 標的の方を向いて攻撃
+      sel.facing=Math.round((Math.atan2(gx-sel.gx,-(gz-sel.gz))/(Math.PI*2)*8)+8)%8;
+      doAtk(sel,cu);
+      sel.acted=true;curAct=null;hlTiles=[];
+      chkVic();updUI();return;
+    }
   } else if(curAct==='at'&&sel){
     if(cu&&cu.side!==sel.side&&atkTargets(sel).includes(cu)){
       doAtk(sel,cu);sel.acted=true;curAct=null;hlTiles=[];
@@ -500,7 +535,10 @@ function tileClick(gx,gz){
     }
   }
   if(cu&&cu.side==='player'&&cu.hp>0){
-    sel=cu;curAct=null;hlTiles=[];updUI();
+    sel=cu;curAct=null;hlTiles=[];
+    // 選択と同時に移動範囲を表示（未行動なら）
+    if(!cu.acted) setAct('mv');
+    else updUI();
   }
 }
 
