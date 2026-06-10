@@ -94,6 +94,7 @@ body { display: flex; font-family: 'MS Gothic', monospace; color: #e0d5c0; }
     <button class="ab" id="b-rl">← 左回転</button>
     <button class="ab" id="b-rr">右回転 →</button>
     <button class="ab" id="b-at">攻撃</button>
+    <button class="ab" id="b-ch">突撃（騎馬）</button>
     <button class="ab" id="b-sh">射撃</button>
     <button class="ab" id="b-df">防御</button>
     <button class="ab" id="end-btn">ターン終了</button>
@@ -450,13 +451,13 @@ function altMult(att,def){
   return 1.0;
 }
 
-function doAtk(att, def, isRanged){
+function doAtk(att, def, isRanged, isCharge){
   const da=UDATA[att.type], dd=UDATA[def.type];
   const tDef=TDATA[terrain[def.gz][def.gx]];
   const tAtt=TDATA[terrain[att.gz][att.gx]];
 
-  // 攻撃力（地形・標高）
-  const rawAtk = isRanged ? da.sh : da.atk;
+  // 攻撃力（地形・標高）。突撃は攻撃力25固定だが自軍にも損害
+  const rawAtk = isCharge ? 25 : isRanged ? da.sh : da.atk;
   const terrAtkM = isRanged ? tAtt.shM : tAtt.atkM;
   const alt = altMult(att, def);
   // 射撃の距離減衰: 隣接100%、1マス離れる毎に-20%（距離5で0）
@@ -487,9 +488,15 @@ function doAtk(att, def, isRanged){
   if(alt>1.1) tags.push('高地有利');
   else if(alt<0.9) tags.push('高地不利');
   if(surround<1.0) tags.push(`包囲${adjEnemies}方向`);
+  if(isCharge) tags.push('突撃');
   const tagStr=tags.length?`【${tags.join('・')}】`:'';
   log(`${att.cmd}→${def.cmd}: ${dmg}ダメージ${tagStr}`,'c');
   if(def.hp<=0) log(`${def.cmd}の部隊、壊滅！`,'c');
+  if(isCharge){
+    att.hp=Math.max(0,att.hp-8);
+    log(`${att.cmd}は突撃の反動で8の損害`,'m');
+    if(att.hp<=0) log(`${att.cmd}の部隊、壊滅！`,'c');
+  }
   updateUDisp();
 }
 
@@ -512,7 +519,7 @@ function setAct(a){
     // 移動範囲に隣接する敵 = 移動攻撃可能
     moveAtkTargets(sel,tiles).forEach(o=>hlTiles.push({gx:o.gx,gz:o.gz,t:'at'}));
   }
-  else if(a==='at') atkTargets(sel).forEach(u=>hlTiles.push({gx:u.gx,gz:u.gz,t:'at'}));
+  else if(a==='at'||a==='ch') atkTargets(sel).forEach(u=>hlTiles.push({gx:u.gx,gz:u.gz,t:'at'}));
   else if(a==='sh') shootTargets(sel).forEach(u=>hlTiles.push({gx:u.gx,gz:u.gz,t:'sh'}));
   else if(a==='df'){
     sel.defending=true;sel.acted=true;
@@ -552,9 +559,9 @@ function tileClick(gx,gz){
       sel.acted=true;curAct=null;hlTiles=[];
       chkVic();updUI();return;
     }
-  } else if(curAct==='at'&&sel){
+  } else if((curAct==='at'||curAct==='ch')&&sel){
     if(cu&&cu.side!==sel.side&&atkTargets(sel).includes(cu)){
-      doAtk(sel,cu);sel.acted=true;curAct=null;hlTiles=[];
+      doAtk(sel,cu,false,curAct==='ch');sel.acted=true;curAct=null;hlTiles=[];
       chkVic();updUI();return;
     }
   } else if(curAct==='sh'&&sel){
@@ -599,7 +606,8 @@ function enemyTurn(){
       // 防御減衰が最小（背後寄り）の相手を狙う
       let best=at[0],bm=facingDecay(e,at[0]);
       for(const t of at){const m=facingDecay(e,t);if(m<bm){bm=m;best=t;}}
-      doAtk(e,best);chkVic();continue;
+      // 騎馬は体力に余裕があれば突撃
+      doAtk(e,best,false,e.type==='CAVALRY'&&e.hp>20);chkVic();continue;
     }
     const mv=reachable(e);
     if(mv.length){
@@ -701,10 +709,11 @@ function updBtns(){
   document.getElementById('b-rl').disabled=!hu||!ip;
   document.getElementById('b-rr').disabled=!hu||!ip;
   document.getElementById('b-at').disabled=!ca;
+  document.getElementById('b-ch').disabled=!ca||sel.type!=='CAVALRY';
   document.getElementById('b-sh').disabled=!ca||!hs;
   document.getElementById('b-df').disabled=!ca;
   document.getElementById('end-btn').disabled=!ip||over;
-  const m={'b-mv':'mv','b-at':'at','b-sh':'sh'};
+  const m={'b-mv':'mv','b-at':'at','b-ch':'ch','b-sh':'sh'};
   for(const id in m) document.getElementById(id).classList.toggle('on',m[id]===curAct);
 }
 function showOv(t,m){
@@ -1059,6 +1068,7 @@ document.getElementById('b-mv').addEventListener('click',()=>setAct('mv'));
 document.getElementById('b-rl').addEventListener('click',()=>rotate(-1));
 document.getElementById('b-rr').addEventListener('click',()=>rotate(1));
 document.getElementById('b-at').addEventListener('click',()=>setAct('at'));
+document.getElementById('b-ch').addEventListener('click',()=>setAct('ch'));
 document.getElementById('b-sh').addEventListener('click',()=>setAct('sh'));
 document.getElementById('b-df').addEventListener('click',()=>setAct('df'));
 document.getElementById('end-btn').addEventListener('click',endTurn);
