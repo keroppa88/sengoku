@@ -114,13 +114,13 @@ const TDATA = {
 
 // mv=移動力, atk=攻撃力, def=防御力, sh=射撃力, sr=射程
 const UDATA = {
-  HONJIN:   {name:'本陣',   sym:'本', hp:200, atk:10, def:20, mv:7,  sh:12, sr:4 },
+  HONJIN:   {name:'本陣',   sym:'本', hp:200, atk:10, def:20, mv:8,  sh:12, sr:4 },
   HATAMOTO: {name:'旗本',   sym:'旗', hp:150, atk:12, def:12, mv:12, sh:12, sr:4 },
   CAVALRY:  {name:'騎馬',   sym:'馬', hp:120, atk:15, def:12, mv:20, sh:0,  sr:0 },
-  RIFLE:    {name:'鉄砲足軽',sym:'銃', hp:80,  atk:5,  def:7,  mv:7,  sh:25, sr:4 },
-  BOW:      {name:'弓足軽', sym:'弓', hp:80,  atk:5,  def:7,  mv:7,  sh:15, sr:4 },
-  INFANTRY: {name:'足軽',   sym:'足', hp:100, atk:8,  def:8,  mv:7,  sh:2,  sr:2 },
-  RABBLE:   {name:'烏合衆', sym:'衆', hp:60,  atk:5,  def:5,  mv:5,  sh:0,  sr:0 },
+  RIFLE:    {name:'鉄砲足軽',sym:'銃', hp:80,  atk:5,  def:7,  mv:8,  sh:25, sr:4 },
+  BOW:      {name:'弓足軽', sym:'弓', hp:80,  atk:5,  def:7,  mv:8,  sh:15, sr:4 },
+  INFANTRY: {name:'足軽',   sym:'足', hp:100, atk:8,  def:8,  mv:8,  sh:2,  sr:2 },
+  RABBLE:   {name:'烏合衆', sym:'衆', hp:60,  atk:5,  def:5,  mv:6,  sh:0,  sr:0 },
 };
 
 const CMDS = ['織田信長','豊臣秀吉','徳川家康','武田信玄','上杉謙信',
@@ -552,27 +552,24 @@ function rotate(d){
 function enemyTurn(){
   log('--- 敵の番 ---','s');
   const enemies=units.filter(u=>u.hp>0&&u.side==='enemy');
-  let i=0;
-  function step(){
-    if(over) return;
-    if(i>=enemies.length){ endEnemyTurn(); return; }
-    const e=enemies[i++];
-    if(e.hp<=0){ step(); return; }
+  for(const e of enemies){
+    if(over) break;
+    if(e.hp<=0) continue;
     const players=units.filter(u=>u.hp>0&&u.side==='player');
-    if(!players.length){ chkVic(); return; }
+    if(!players.length){ chkVic(); break; }
     let near=players[0];
     for(const p of players) if(mdist(e,p)<mdist(e,near)) near=p;
     const dx=near.gx-e.gx, dz=near.gz-e.gz;
     e.facing=Math.round((Math.atan2(dx,-dz)/(Math.PI*2)*8)+8)%8;
     if(UDATA[e.type].sr){
       const st=shootTargets(e);
-      if(st.length){doAtk(e,st[0],true);chkVic();setTimeout(step,250);return;}
+      if(st.length){doAtk(e,st[0],true);chkVic();continue;}
     }
     const at=atkTargets(e);
     if(at.length){
       let best=at[0],bm=facingMult(e,at[0]);
       for(const t of at){const m=facingMult(e,t);if(m>bm){bm=m;best=t;}}
-      doAtk(e,best);chkVic();setTimeout(step,250);return;
+      doAtk(e,best);chkVic();continue;
     }
     const mv=reachable(e);
     if(mv.length){
@@ -585,9 +582,8 @@ function enemyTurn(){
       }
       e.gx=bt.x;e.gz=bt.z;log(`${e.cmd}が前進`,'m');
     }
-    setTimeout(step,200);
   }
-  step();
+  if(!over) endEnemyTurn();
 }
 
 function endEnemyTurn(){
