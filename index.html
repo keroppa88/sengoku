@@ -52,6 +52,13 @@ body { display: flex; font-family: 'MS Gothic', monospace; color: #e0d5c0; }
   color:#e0c0ff; font-size:14px; cursor:pointer; font-family:inherit;
 }
 #ov-btn:hover { background:#4a2a70; }
+.army-btn {
+  display:block; width:100%; padding:12px 28px; margin:8px 0;
+  background:#3a1a60; border:2px solid #8040c0;
+  color:#e0c0ff; font-size:14px; cursor:pointer; font-family:inherit;
+}
+.army-btn:hover { background:#4a2a70; }
+.army-btn .rs { display:block; font-size:10px; color:#a080c0; margin-top:4px; }
 #help { position:absolute; bottom:6px; left:6px; font-size:9px; color:#605040; pointer-events:none; text-shadow:0 1px 2px #000; }
 </style>
 </head>
@@ -64,6 +71,10 @@ body { display: flex; font-family: 'MS Gothic', monospace; color: #e0d5c0; }
       <h1 id="ov-title"></h1>
       <p id="ov-msg"></p>
       <button id="ov-btn">再戦する</button>
+      <div id="army-pick" style="display:none">
+        <button class="army-btn" data-army="hideyoshi">羽柴秀吉軍で出陣<span class="rs">秀吉・池田恒興・黒田官兵衛・森長可・堀秀政・尾藤知宣・仙谷権兵衛</span></button>
+        <button class="army-btn" data-army="ieyasu">徳川家康軍で出陣<span class="rs">家康・石川数正・酒井忠次・本多忠勝・榊原康政・井伊直正</span></button>
+      </div>
     </div>
   </div>
 </div>
@@ -114,23 +125,41 @@ const TDATA = {
 
 // mv=移動力, atk=攻撃力, def=防御力, sh=射撃力, sr=射程
 const UDATA = {
-  HONJIN:   {name:'本陣',   sym:'本', hp:200, atk:10, def:12, mv:8,  sh:12, sr:4 },
-  HATAMOTO: {name:'旗本',   sym:'旗', hp:150, atk:12, def:12, mv:12, sh:12, sr:4 },
-  CAVALRY:  {name:'騎馬',   sym:'馬', hp:120, atk:15, def:12, mv:20, sh:0,  sr:0 },
-  RIFLE:    {name:'鉄砲足軽',sym:'銃', hp:80,  atk:5,  def:7,  mv:8,  sh:25, sr:4 },
-  BOW:      {name:'弓足軽', sym:'弓', hp:80,  atk:5,  def:7,  mv:8,  sh:15, sr:4 },
+  // 兵力(HP)は全ユニット共通
+  HONJIN:   {name:'本陣',   sym:'本', hp:100, atk:10, def:12, mv:8,  sh:12, sr:4 },
+  HATAMOTO: {name:'旗本',   sym:'旗', hp:100, atk:12, def:12, mv:12, sh:12, sr:4 },
+  CAVALRY:  {name:'騎馬',   sym:'馬', hp:100, atk:15, def:12, mv:20, sh:0,  sr:0 },
+  RIFLE:    {name:'鉄砲足軽',sym:'銃', hp:100, atk:5,  def:7,  mv:8,  sh:25, sr:4 },
+  BOW:      {name:'弓足軽', sym:'弓', hp:100, atk:5,  def:7,  mv:8,  sh:15, sr:4 },
   INFANTRY: {name:'足軽',   sym:'足', hp:100, atk:8,  def:8,  mv:8,  sh:0,  sr:0 },
-  RABBLE:   {name:'烏合衆', sym:'衆', hp:60,  atk:5,  def:5,  mv:6,  sh:0,  sr:0 },
+  RABBLE:   {name:'烏合衆', sym:'衆', hp:100, atk:5,  def:5,  mv:6,  sh:0,  sr:0 },
 };
 
-const CMDS = ['織田信長','豊臣秀吉','徳川家康','武田信玄','上杉謙信',
-  '明智光秀','伊達政宗','毛利元就','島津義久','真田幸村',
-  '北条氏康','長宗我部元親','浅井長政','柴田勝家','前田利家',
-  '黒田官兵衛','竹中半兵衛','加藤清正','福島正則','石田三成'];
+// 軍編成: 各武将は強さ倍率(str)を持ち、攻撃・防御・射撃に掛かる
+// dx: 前後（+が前線寄り）, dz: 左右
+const ARMIES = {
+  hideyoshi: { name:'羽柴秀吉軍', roster:[
+    { cmd:'羽柴秀吉',   t:'HONJIN',   str:1.1, dx:-1, dz: 0 },
+    { cmd:'黒田官兵衛', t:'HATAMOTO', str:1.1, dx: 0, dz: 0 },
+    { cmd:'池田恒興',   t:'INFANTRY', str:1.0, dx: 2, dz:-2 },
+    { cmd:'堀秀政',     t:'INFANTRY', str:0.9, dx: 2, dz: 2 },
+    { cmd:'森長可',     t:'CAVALRY',  str:1.0, dx: 1, dz:-3 },
+    { cmd:'仙谷権兵衛', t:'RIFLE',    str:0.8, dx: 1, dz:-1 },
+    { cmd:'尾藤知宣',   t:'BOW',      str:0.8, dx: 1, dz: 1 },
+  ]},
+  ieyasu: { name:'徳川家康軍', roster:[
+    { cmd:'徳川家康',   t:'HONJIN',   str:1.1, dx:-1, dz: 0 },
+    { cmd:'井伊直正',   t:'HATAMOTO', str:1.0, dx: 0, dz: 0 },
+    { cmd:'石川数正',   t:'INFANTRY', str:0.9, dx: 2, dz:-2 },
+    { cmd:'酒井忠次',   t:'INFANTRY', str:0.8, dx: 2, dz: 2 },
+    { cmd:'本多忠勝',   t:'CAVALRY',  str:1.1, dx: 1, dz:-3 },
+    { cmd:'榊原康政',   t:'RIFLE',    str:0.8, dx: 1, dz:-1 },
+  ]},
+};
 const DNAMES = ['北','北東','東','南東','南','南西','西','北西'];
 
 // ── ゲーム状態 ──
-let terrain=[], hmap=[], units=[], cmdI=0;
+let terrain=[], hmap=[], units=[];
 let turnNum=1, phase='player', sel=null, curAct=null, hlTiles=[], over=false;
 
 // 描画用: 頂点単位の連続データ (GW+1 × GH+1)
@@ -310,32 +339,22 @@ function baseCol(n, m){
 }
 
 // ── ユニット ──
-function mkUnit(gx,gz,type,side,facing){
+function mkUnit(gx,gz,type,side,facing,cmd,str){
   const d=UDATA[type];
-  const mh=d.hp*(1+Math.random()*.3);
   const u={id:units.length,gx,gz,type,side,facing,
-    hp:mh,maxHp:mh,soldiers:800+Math.floor(Math.random()*400),
+    hp:d.hp,maxHp:d.hp,soldiers:800+Math.floor(Math.random()*400),
     morale:80+Math.floor(Math.random()*20),
-    cmd:CMDS[cmdI++%CMDS.length],
+    cmd,str,
     acted:false,defending:false};
   units.push(u); return u;
 }
 
-function placeUnits(){
-  // 陣形（前方=敵側を向いた攻撃方向, 横列で固める）
-  // dx: 前後（+が前線寄り）, dz: 左右
-  const FORMATION = [
-    {t:'INFANTRY', dx: 2, dz:-2}, {t:'INFANTRY', dx: 2, dz: 0}, {t:'INFANTRY', dx: 2, dz: 2}, // 前衛: 足軽横列
-    {t:'RIFLE',    dx: 1, dz:-1}, {t:'BOW',      dx: 1, dz: 1},                                 // 中衛: 飛び道具
-    {t:'CAVALRY',  dx: 1, dz:-3}, {t:'RABBLE',   dx: 1, dz: 3},                                 // 両翼
-    {t:'HATAMOTO', dx: 0, dz: 0},                                                                // 旗本
-    {t:'HONJIN',   dx:-1, dz: 0},                                                                // 本陣（最後方）
-    {t:'RABBLE',   dx:-1, dz: 2},                                                                // 予備
-  ];
+function placeUnits(playerArmy){
+  const enemyArmy = playerArmy==='hideyoshi' ? 'ieyasu' : 'hideyoshi';
   const used=new Set();
   // anchor を中心に陣形配置。川なら近くにずらす
-  function place(anchorX, anchorZ, side, facing, fwd){
-    for(const f of FORMATION){
+  function place(armyKey, anchorX, anchorZ, side, facing, fwd){
+    for(const f of ARMIES[armyKey].roster){
       let x=anchorX+f.dx*fwd, z=anchorZ+f.dz;
       // 川・重複なら近傍を探す
       let fx=x, fz=z, found=false;
@@ -350,11 +369,11 @@ function placeUnits(){
         }
       }
       used.add(fx+','+fz);
-      mkUnit(fx,fz,f.t,side,facing);
+      mkUnit(fx,fz,f.t,side,facing,f.cmd,f.str);
     }
   }
-  place(6,  GH/2, 'player', 2,  1);  // 左側・東向き
-  place(25, GH/2, 'enemy',  6, -1);  // 右側・西向き
+  place(playerArmy, 6,  GH/2, 'player', 2,  1);  // 左側・東向き
+  place(enemyArmy,  25, GH/2, 'enemy',  6, -1);  // 右側・西向き
 }
 
 // ── 経路・範囲 ──
@@ -446,12 +465,12 @@ function doAtk(att, def, isRanged){
     distM = Math.max(0, 1 - 0.2*(d-1));
     if(distM <= 0){ log(`${att.cmd}の射撃は届かなかった`,'m'); return; }
   }
-  let atkPow = rawAtk * terrAtkM * alt * distM * (0.85+Math.random()*0.3);
+  let atkPow = rawAtk * (att.str||1) * terrAtkM * alt * distM * (0.85+Math.random()*0.3);
 
   // 防御力（地形 × 方向減衰 × 防御態勢）— 射撃にも方向減衰を適用
   const decay  = facingDecay(att, def);
   const stance = def.defending ? 2.0 : 1.0;
-  const defPow = dd.def * tDef.defM * decay * stance;
+  const defPow = dd.def * (def.str||1) * tDef.defM * decay * stance;
 
   const dmg = Math.max(1, Math.floor(atkPow - defPow*0.5));
 
@@ -658,6 +677,7 @@ function updateUDisp(){
   el.innerHTML=`
 <div class="sr"><span class="sl">部隊</span><span class="sv">${d.name}</span></div>
 <div class="sr"><span class="sl">武将</span><span class="sv">${u.cmd}</span></div>
+<div class="sr"><span class="sl">強さ</span><span class="sv">×${u.str}</span></div>
 <div class="sr"><span class="sl">兵力</span><span class="sv">${u.soldiers}人</span></div>
 <div class="sr"><span class="sl">HP</span><span class="sv">${hp}%</span></div>
 <div class="bar"><div class="bf" style="width:${hp}%;background:${hc}"></div></div>
@@ -685,6 +705,8 @@ function updBtns(){
 function showOv(t,m){
   document.getElementById('ov-title').textContent=t;
   document.getElementById('ov-msg').textContent=m;
+  document.getElementById('ov-btn').style.display='inline-block';
+  document.getElementById('army-pick').style.display='none';
   document.getElementById('overlay').style.display='flex';
 }
 
@@ -1035,17 +1057,27 @@ document.getElementById('b-at').addEventListener('click',()=>setAct('at'));
 document.getElementById('b-sh').addEventListener('click',()=>setAct('sh'));
 document.getElementById('b-df').addEventListener('click',()=>setAct('df'));
 document.getElementById('end-btn').addEventListener('click',endTurn);
-document.getElementById('ov-btn').addEventListener('click',()=>{
+document.getElementById('ov-btn').addEventListener('click', showArmySelect);
+document.querySelectorAll('.army-btn').forEach(b=>b.addEventListener('click',()=>{
   document.getElementById('overlay').style.display='none';
-  startGame();
-});
+  startGame(b.dataset.army);
+}));
 
 // ── 起動 ──
-function startGame(){
-  over=false; turnNum=1; phase='player'; sel=null; curAct=null; cmdI=0;
+function showArmySelect(){
+  document.getElementById('ov-title').textContent='⚔ 小牧・長久手の戦い';
+  document.getElementById('ov-msg').textContent='どちらの軍で出陣する？';
+  document.getElementById('ov-btn').style.display='none';
+  document.getElementById('army-pick').style.display='block';
+  document.getElementById('overlay').style.display='flex';
+}
+
+function startGame(armyKey){
+  over=false; turnNum=1; phase='player'; sel=null; curAct=null;
   units=[]; hlTiles=[];
-  genTerrain(); placeUnits(); resetCam();
+  genTerrain(); placeUnits(armyKey); resetCam();
   log('--- 合戦開始！ ---','s');
+  log(`${ARMIES[armyKey].name}として出陣！`,'s');
   log('部隊をクリックして指揮を執れ！','s');
   updUI();
 }
@@ -1058,7 +1090,8 @@ function loop(){
 }
 
 onResize();
-startGame();
+genTerrain(); resetCam();   // 背景に地形だけ描いて軍選択を表示
+showArmySelect();
 loop();
 </script>
 </body>
