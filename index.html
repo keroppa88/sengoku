@@ -678,109 +678,87 @@ function drawTile(it){
   }
 }
 
+// 凸の輪郭 (右r, 前f)。出っ張りが向いている方向 = 部隊の正面
+const TOTSU = [
+  [-1.0,-0.65],[ 1.0,-0.65],[ 1.0, 0.15],[ 0.42, 0.15],
+  [ 0.42, 0.72],[-0.42, 0.72],[-0.42, 0.15],[-1.0, 0.15],
+];
+
 function drawUnit(it){
   const {u,wx,wz,h}=it;
   const isP=u.side==='player';
   const sel2=sel===u;
   let body, dark;
   if(isP){
-    body=u.acted?[26,48,96]:sel2?[90,140,255]:[50,100,220];
-    dark=u.acted?[16,30,64]:[30,60,150];
+    body=u.acted?[26,48,96]:sel2?[110,160,255]:[50,100,220];
+    dark=u.acted?[14,26,56]:[28,56,140];
   } else {
-    body=[205,40,40]; dark=[140,25,25];
+    body=[205,40,40]; dark=[130,22,22];
   }
   function shade(c,f){return `rgb(${Math.min(255,c[0]*f)|0},${Math.min(255,c[1]*f)|0},${Math.min(255,c[2]*f)|0})`;}
 
-  const bw=0.8, bh=0.9, kw=0.35, kh=0.45;
-  const c=[
-    project(wx-bw,h,wz-bw), project(wx+bw,h,wz-bw),
-    project(wx+bw,h,wz+bw), project(wx-bw,h,wz+bw),
-    project(wx-bw,h+bh,wz-bw), project(wx+bw,h+bh,wz-bw),
-    project(wx+bw,h+bh,wz+bw), project(wx-bw,h+bh,wz+bw),
-  ];
-  if(c.some(p=>!p)) return;
-
-  function quad(a,b2,c2,d2,fill){
-    ctx.fillStyle=fill;
-    ctx.beginPath();
-    ctx.moveTo(a.x,a.y);ctx.lineTo(b2.x,b2.y);
-    ctx.lineTo(c2.x,c2.y);ctx.lineTo(d2.x,d2.y);
-    ctx.closePath();ctx.fill();
-    ctx.strokeStyle='rgba(0,0,0,0.3)';ctx.lineWidth=0.6;ctx.stroke();
-  }
-
-  const faces=[
-    {pts:[c[0],c[1],c[5],c[4]]},{pts:[c[1],c[2],c[6],c[5]]},
-    {pts:[c[2],c[3],c[7],c[6]]},{pts:[c[3],c[0],c[4],c[7]]},
-  ];
-  faces.sort((a,b2)=>{
-    const da=a.pts.reduce((s,p)=>s+p.d,0), db=b2.pts.reduce((s,p)=>s+p.d,0);
-    return db-da;
-  });
-  for(const f of faces) quad(f.pts[0],f.pts[1],f.pts[2],f.pts[3],shade(dark,1));
-  quad(c[4],c[5],c[6],c[7],shade(body,1));
-
-  const k=[
-    project(wx-kw,h+bh,wz-kw), project(wx+kw,h+bh,wz-kw),
-    project(wx+kw,h+bh,wz+kw), project(wx-kw,h+bh,wz+kw),
-    project(wx-kw,h+bh+kh,wz-kw), project(wx+kw,h+bh+kh,wz-kw),
-    project(wx+kw,h+bh+kh,wz+kw), project(wx-kw,h+bh+kh,wz+kw),
-  ];
-  if(!k.some(p=>!p)){
-    const kf=[
-      {pts:[k[0],k[1],k[5],k[4]]},{pts:[k[1],k[2],k[6],k[5]]},
-      {pts:[k[2],k[3],k[7],k[6]]},{pts:[k[3],k[0],k[4],k[7]]},
-    ];
-    kf.sort((a,b2)=>{
-      const da=a.pts.reduce((s,p)=>s+p.d,0), db=b2.pts.reduce((s,p)=>s+p.d,0);
-      return db-da;
-    });
-    for(const f of kf) quad(f.pts[0],f.pts[1],f.pts[2],f.pts[3],shade(dark,1.1));
-    quad(k[4],k[5],k[6],k[7],shade(body,1.15));
-  }
-
-  // 向き矢印
+  // 向きに応じて回転（facing 0=北 → 前方ベクトル）
   const ang=(u.facing/8)*Math.PI*2;
-  const fx=Math.sin(ang), fz=-Math.cos(ang);
-  const ax=wx+fx*1.6, az=wz+fz*1.6;
-  const lx=-fz, lz=fx;
-  const ah=groundH(ax,az)+0.08;
-  const t1=project(ax+fx*0.5, ah, az+fz*0.5);
-  const t2=project(ax-fx*0.3+lx*0.45, ah, az-fz*0.3+lz*0.45);
-  const t3=project(ax-fx*0.3-lx*0.45, ah, az-fz*0.3-lz*0.45);
-  if(t1&&t2&&t3){
-    ctx.fillStyle=isP?'rgba(130,200,255,0.95)':'rgba(255,140,140,0.95)';
-    ctx.beginPath();
-    ctx.moveTo(t1.x,t1.y);ctx.lineTo(t2.x,t2.y);ctx.lineTo(t3.x,t3.y);
-    ctx.closePath();ctx.fill();
+  const fx=Math.sin(ang), fz=-Math.cos(ang);  // 前
+  const rx=-fz, rz=fx;                         // 右
+  const SC=1.3, TH=0.5;                        // スケール・厚み
+
+  // 凸の各頂点をワールド座標へ（下面・上面）
+  const bot=[], top=[];
+  for(const [r,f] of TOTSU){
+    const px=wx+(rx*r+fx*f)*SC, pz=wz+(rz*r+fz*f)*SC;
+    const b=project(px,h,pz), t=project(px,h+TH,pz);
+    if(!b||!t) return;
+    bot.push(b); top.push(t);
   }
 
-  // 旗＋兵種記号
-  const pt=project(wx,h+bh+kh+1.3,wz);
-  const pb=project(wx,h+bh+kh,wz);
-  if(pt&&pb){
-    ctx.strokeStyle='#8b6020';ctx.lineWidth=1.5;
-    ctx.beginPath();ctx.moveTo(pb.x,pb.y);ctx.lineTo(pt.x,pt.y);ctx.stroke();
-    const fh=(pb.y-pt.y)*0.45;
-    if(fh>3){
-      ctx.fillStyle=isP?'#3878ff':'#ff3838';
-      ctx.fillRect(pt.x,pt.y,fh*1.4,fh);
-      ctx.fillStyle='#fff';
-      ctx.font=`bold ${Math.max(6,fh*0.8)|0}px sans-serif`;
-      ctx.textAlign='center';ctx.textBaseline='middle';
-      ctx.fillText(UDATA[u.type].sym, pt.x+fh*0.7, pt.y+fh*0.5);
-    }
+  // 側面（奥→手前順に描画）
+  const n=TOTSU.length;
+  const sides=[];
+  for(let i=0;i<n;i++){
+    const j=(i+1)%n;
+    sides.push({d:(bot[i].d+bot[j].d)/2, i, j});
+  }
+  sides.sort((a,b)=>b.d-a.d);
+  for(const s of sides){
+    ctx.fillStyle=shade(dark,1);
+    ctx.beginPath();
+    ctx.moveTo(bot[s.i].x,bot[s.i].y);ctx.lineTo(bot[s.j].x,bot[s.j].y);
+    ctx.lineTo(top[s.j].x,top[s.j].y);ctx.lineTo(top[s.i].x,top[s.i].y);
+    ctx.closePath();ctx.fill();
+    ctx.strokeStyle='rgba(0,0,0,0.35)';ctx.lineWidth=0.5;ctx.stroke();
+  }
+
+  // 上面（凸そのもの）
+  ctx.fillStyle=shade(body,1);
+  ctx.beginPath();
+  ctx.moveTo(top[0].x,top[0].y);
+  for(let i=1;i<n;i++) ctx.lineTo(top[i].x,top[i].y);
+  ctx.closePath();ctx.fill();
+  ctx.strokeStyle=sel2?'rgba(255,255,120,0.95)':'rgba(0,0,0,0.45)';
+  ctx.lineWidth=sel2?1.6:0.8;
+  ctx.stroke();
+
+  // 上面に兵種記号
+  const pc=project(wx,h+TH+0.01,wz);
+  if(pc){
+    const fs=Math.max(5, 700/pc.d);
+    ctx.fillStyle='#fff';
+    ctx.font=`bold ${fs|0}px sans-serif`;
+    ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillText(UDATA[u.type].sym, pc.x, pc.y);
   }
 
   // HPバー
-  const hb1=project(wx,h+bh+kh+1.7,wz);
-  if(hb1){
-    const w=Math.max(10,800/hb1.d);
+  const hb=project(wx, h+TH, wz);
+  if(hb){
+    const w=Math.max(10,900/hb.d);
     const pct=u.hp/u.maxHp;
-    ctx.fillStyle='#222';
-    ctx.fillRect(hb1.x-w/2,hb1.y-2,w,3);
+    const yoff=Math.max(8, 1100/hb.d);
+    ctx.fillStyle='rgba(20,20,20,0.8)';
+    ctx.fillRect(hb.x-w/2,hb.y-yoff,w,3);
     ctx.fillStyle=pct>0.6?'#3c3':pct>0.3?'#cc3':'#c33';
-    ctx.fillRect(hb1.x-w/2,hb1.y-2,w*pct,3);
+    ctx.fillRect(hb.x-w/2,hb.y-yoff,w*pct,3);
   }
 }
 
