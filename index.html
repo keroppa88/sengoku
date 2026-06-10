@@ -8,7 +8,8 @@
 html, body { width: 100%; height: 100%; overflow: hidden; background: #111; }
 body { display: flex; font-family: 'MS Gothic', monospace; color: #e0d5c0; }
 #canvas-wrap { flex: 1; position: relative; min-width: 0; }
-#canvas-wrap canvas { display: block; width: 100% !important; height: 100% !important; }
+#c { display: block; width: 100%; height: 100%; cursor: grab; }
+#c.dragging { cursor: grabbing; }
 #ui {
   width: 250px; flex-shrink: 0; background: #0d0d1a;
   border-left: 2px solid #7a6340; display: flex; flex-direction: column;
@@ -29,7 +30,6 @@ body { display: flex; font-family: 'MS Gothic', monospace; color: #e0d5c0; }
   display:block; width:100%; padding:6px 8px; margin:2px 0;
   background:#1e1632; color:#c8b890; border:1px solid #4a3a5a;
   cursor:pointer; font-size:11px; font-family:inherit; text-align:center;
-  transition:background .1s;
 }
 .ab:hover:not(:disabled) { background:#2e2545; }
 .ab.on { background:#4a2a7a; border-color:#9050d0; color:#fff; }
@@ -42,12 +42,9 @@ body { display: flex; font-family: 'MS Gothic', monospace; color: #e0d5c0; }
 .le.c { color:#d05040; } .le.m { color:#5090d0; } .le.s { color:#60b060; }
 #overlay {
   position:absolute; inset:0; background:rgba(0,0,0,.8);
-  display:flex; align-items:center; justify-content:center; z-index:50;
+  display:none; align-items:center; justify-content:center; z-index:50;
 }
-#ovbox {
-  background:#100c1e; border:2px solid #7a6340; padding:36px; text-align:center;
-  min-width:280px;
-}
+#ovbox { background:#100c1e; border:2px solid #7a6340; padding:36px; text-align:center; min-width:280px; }
 #ovbox h1 { font-size:24px; color:#f0c040; margin-bottom:12px; }
 #ovbox p { color:#a09070; font-size:12px; margin-bottom:20px; line-height:1.6; }
 #ov-btn {
@@ -55,16 +52,16 @@ body { display: flex; font-family: 'MS Gothic', monospace; color: #e0d5c0; }
   color:#e0c0ff; font-size:14px; cursor:pointer; font-family:inherit;
 }
 #ov-btn:hover { background:#4a2a70; }
-#help { position:absolute; bottom:6px; left:6px; font-size:9px; color:#504030; pointer-events:none; }
+#help { position:absolute; bottom:6px; left:6px; font-size:9px; color:#605040; pointer-events:none; text-shadow:0 1px 2px #000; }
 </style>
 </head>
 <body>
 <div id="canvas-wrap">
   <canvas id="c"></canvas>
-  <div id="help">ドラッグ:回転 ｜ ホイール:ズーム ｜ WASD:移動 ｜ R:リセット</div>
-  <div id="overlay" style="display:none">
+  <div id="help">右ドラッグ/Ctrl+ドラッグ:視点回転 ｜ ホイール:ズーム ｜ WASD/矢印:移動 ｜ R:リセット ｜ 左クリック:選択</div>
+  <div id="overlay">
     <div id="ovbox">
-      <h1 id="ov-title">勝利！</h1>
+      <h1 id="ov-title"></h1>
       <p id="ov-msg"></p>
       <button id="ov-btn">再戦する</button>
     </div>
@@ -72,7 +69,7 @@ body { display: flex; font-family: 'MS Gothic', monospace; color: #e0d5c0; }
 </div>
 <div id="ui">
   <div id="hdr">
-    <h2>戦国合戦</h2>
+    <h2>⚔ 戦国合戦</h2>
     <div id="t-num" class="sub">第 1 ターン</div>
     <div id="t-phase" class="sub" style="color:#60c060">あなたの番</div>
   </div>
@@ -96,30 +93,32 @@ body { display: flex; font-family: 'MS Gothic', monospace; color: #e0d5c0; }
   </div>
 </div>
 
-<script type="module">
-import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
-import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js';
+<script>
+'use strict';
+// ════════════════════════════════════════════════════════════
+// 自前3Dエンジン (Canvas 2D) — 外部ライブラリ不要
+// ════════════════════════════════════════════════════════════
 
-// ── Constants ──────────────────────────────────────────────
-const GW = 32, GH = 32, TS = 2.5; // grid width/height, tile size
+// ── 定数 ──
+const GW = 32, GH = 32, TS = 2.5;
 
 const TDATA = {
-  PLAIN:  { name:'平野',  color:0x5a8a3a, mc:1.0,  def:0  },
-  RICE:   { name:'田んぼ',color:0x8aaa3a, mc:1.2,  def:-1 },
-  FOREST: { name:'林',    color:0x2d5c2d, mc:2.0,  def:2  },
-  SWAMP:  { name:'湿地',  color:0x3a5a2a, mc:3.0,  def:-1 },
-  RIVER:  { name:'川',    color:0x3a6aaa, mc:99.0, def:0  },
-  HILL:   { name:'丘',    color:0x7a6a4a, mc:1.5,  def:3  },
+  PLAIN:  { name:'平野',  col:[90,138,58],  mc:1.0,  def:0  },
+  RICE:   { name:'田んぼ',col:[138,170,58], mc:1.2,  def:-1 },
+  FOREST: { name:'林',    col:[45,92,45],   mc:2.0,  def:2  },
+  SWAMP:  { name:'湿地',  col:[58,90,42],   mc:3.0,  def:-1 },
+  RIVER:  { name:'川',    col:[58,106,170], mc:99.0, def:0  },
+  HILL:   { name:'丘',    col:[122,106,74], mc:1.5,  def:3  },
 };
 
 const UDATA = {
-  HONJIN:   {name:'本陣',   sym:'⛩', hp:150, atk:12, def:15, mv:1, sr:0 },
-  CAVALRY:  {name:'騎馬',   sym:'馬', hp:90,  atk:20, def:8,  mv:4, sr:0 },
-  MIXED:    {name:'騎馬足軽',sym:'騎', hp:80,  atk:15, def:10, mv:3, sr:0 },
-  RIFLE:    {name:'鉄砲足軽',sym:'銃', hp:60,  atk:22, def:6,  mv:2, sr:5 },
-  BOW:      {name:'弓足軽', sym:'弓', hp:65,  atk:14, def:7,  mv:2, sr:4 },
-  INFANTRY: {name:'足軽',   sym:'足', hp:70,  atk:12, def:8,  mv:2, sr:0 },
-  RABBLE:   {name:'烏合衆', sym:'衆', hp:50,  atk:8,  def:4,  mv:2, sr:0 },
+  HONJIN:   {name:'本陣',    sym:'本', hp:150, atk:12, def:15, mv:1, sr:0 },
+  CAVALRY:  {name:'騎馬',    sym:'馬', hp:90,  atk:20, def:8,  mv:4, sr:0 },
+  MIXED:    {name:'騎馬足軽', sym:'騎', hp:80,  atk:15, def:10, mv:3, sr:0 },
+  RIFLE:    {name:'鉄砲足軽', sym:'銃', hp:60,  atk:22, def:6,  mv:2, sr:5 },
+  BOW:      {name:'弓足軽',  sym:'弓', hp:65,  atk:14, def:7,  mv:2, sr:4 },
+  INFANTRY: {name:'足軽',    sym:'足', hp:70,  atk:12, def:8,  mv:2, sr:0 },
+  RABBLE:   {name:'烏合衆',  sym:'衆', hp:50,  atk:8,  def:4,  mv:2, sr:0 },
 };
 
 const CMDS = ['織田信長','豊臣秀吉','徳川家康','武田信玄','上杉謙信',
@@ -128,59 +127,58 @@ const CMDS = ['織田信長','豊臣秀吉','徳川家康','武田信玄','上�
   '黒田官兵衛','竹中半兵衛','加藤清正','福島正則','石田三成'];
 const DNAMES = ['北','北東','東','南東','南','南西','西','北西'];
 
-// ── State ──────────────────────────────────────────────────
+// ── ゲーム状態 ──
 let terrain=[], hmap=[], units=[], cmdI=0;
 let turnNum=1, phase='player', sel=null, curAct=null, hlTiles=[], over=false;
 
-// ── Three.js setup ─────────────────────────────────────────
+// ── キャンバス ──
 const wrap = document.getElementById('canvas-wrap');
-const canvas = document.getElementById('c');
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+let CW=800, CH=600, DPR=1;
 
-const renderer = new THREE.WebGLRenderer({ canvas, antialias:true });
-renderer.setPixelRatio(Math.min(devicePixelRatio,2));
-renderer.shadowMap.enabled = true;
+function onResize(){
+  DPR = Math.min(devicePixelRatio||1, 2);
+  CW = wrap.clientWidth; CH = wrap.clientHeight;
+  cv.width = CW*DPR; cv.height = CH*DPR;
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+window.addEventListener('resize', onResize);
 
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x1a2535);
-scene.fog = new THREE.FogExp2(0x1a2535, 0.012);
+// ── カメラ（オービット） ──
+const cam = {
+  tx: GW*TS/2, ty: 0, tz: GH*TS/2,  // 注視点
+  yaw: 0.0,           // 水平回転
+  pitch: 1.05,        // 見下ろし角 (rad)
+  dist: 105,          // 距離
+  fov: 600,           // 焦点距離(px)
+};
+function resetCam(){ cam.tx=GW*TS/2; cam.ty=0; cam.tz=GH*TS/2; cam.yaw=0; cam.pitch=1.05; cam.dist=105; }
 
-const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 400);
-camera.position.set(GW*TS*0.5, 45, GH*TS*1.0);
-camera.lookAt(GW*TS*0.5, 0, GH*TS*0.5);
+// ワールド座標→スクリーン座標。戻り値 {x,y,d} d=カメラ距離(depth)。後ろならnull
+function project(wx, wy, wz){
+  // 注視点中心へ
+  let x = wx - cam.tx, y = wy - cam.ty, z = wz - cam.tz;
+  // yaw回転 (Y軸)
+  const cy = Math.cos(cam.yaw), sy = Math.sin(cam.yaw);
+  let x1 = x*cy - z*sy, z1 = x*sy + z*cy;
+  // pitch回転 (X軸)
+  const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
+  let y2 = y*cp - z1*sp, z2 = y*sp + z1*cp;
+  // カメラはz2軸負方向の dist 位置から見る → 視点座標系での奥行
+  const zc = z2 + cam.dist;
+  if (zc < 1) return null;
+  const s = cam.fov / zc;
+  return { x: CW/2 + x1*s, y: CH/2 - y2*s, d: zc };
+}
 
-const oc = new OrbitControls(camera, canvas);
-oc.target.set(GW*TS*0.5, 2, GH*TS*0.5);
-oc.enableDamping = true; oc.dampingFactor = 0.08;
-oc.minDistance = 8; oc.maxDistance = 150;
-oc.maxPolarAngle = Math.PI/2.05;
-oc.update();
-
-scene.add(new THREE.AmbientLight(0xffeedd, 0.7));
-const sun = new THREE.DirectionalLight(0xfff5e0, 1.3);
-sun.position.set(50, 80, 40);
-sun.castShadow = true;
-sun.shadow.mapSize.set(1024,1024);
-sun.shadow.camera.left = sun.shadow.camera.bottom = -80;
-sun.shadow.camera.right = sun.shadow.camera.top = 80;
-sun.shadow.camera.far = 250;
-scene.add(sun);
-
-const tGrp = new THREE.Group(), uGrp = new THREE.Group(),
-      hlGrp= new THREE.Group(), arGrp= new THREE.Group();
-scene.add(tGrp, hlGrp, uGrp, arGrp);
-
-const raycaster = new THREE.Raycaster();
-const mouse = new THREE.Vector2();
-const tileMM = {}; // tile mesh map
-
-// ── Noise / Terrain gen ────────────────────────────────────
+// ── ノイズ・地形生成 ──
 function n2d(x,y,s){const v=Math.sin(x*127.1+y*311.7+s)*43758.5453;return v-Math.floor(v);}
 function sn(x,y,s){const ix=Math.floor(x),iy=Math.floor(y),fx=x-ix,fy=y-iy;
   const ux=fx*fx*(3-2*fx),uy=fy*fy*(3-2*fy);
-  return n2d(ix,iy,s)+(n2d(ix+1,iy,s)-n2d(ix,iy,s))*ux
-        +(n2d(ix,iy+1,s)-n2d(ix,iy,s))*uy
-        +(n2d(ix+1,iy+1,s)+n2d(ix,iy,s)-n2d(ix+1,iy,s)-n2d(ix,iy+1,s))*ux*uy;}
-function fbm(x,y,s){let v=0,a=0.5,f=1,m=0;for(let i=0;i<5;i++){v+=a*sn(x*f,y*f,s+i*17);m+=a;a*=.5;f*=2;}return v/m;}
+  const a=n2d(ix,iy,s),b=n2d(ix+1,iy,s),c=n2d(ix,iy+1,s),d=n2d(ix+1,iy+1,s);
+  return a+(b-a)*ux+(c-a)*uy+(d+a-b-c)*ux*uy;}
+function fbm(x,y,s){let v=0,a=.5,f=1,m=0;for(let i=0;i<5;i++){v+=a*sn(x*f,y*f,s+i*17);m+=a;a*=.5;f*=2;}return v/m;}
 
 function genTerrain(){
   terrain=[]; hmap=[];
@@ -189,44 +187,23 @@ function genTerrain(){
     terrain[z]=[]; hmap[z]=[];
     for(let x=0;x<GW;x++){
       const h=fbm(x/GW*4, z/GH*4, seed);
-      let type, th;
-      if(h<0.30){type='RIVER'; th=-0.3;}
-      else if(h<0.38){type='SWAMP'; th=h*0.5;}
-      else if(h<0.48){type='RICE';  th=h*0.8;}
-      else if(h<0.62){type='PLAIN'; th=h*1.5;}
-      else if(h<0.72){type='FOREST';th=h*2.5;}
-      else           {type='HILL';  th=h*4.0;}
-      terrain[z][x]=type; hmap[z][x]=th;
+      let tp, th;
+      if(h<0.30){tp='RIVER'; th=-0.4;}
+      else if(h<0.38){tp='SWAMP'; th=h*0.5;}
+      else if(h<0.48){tp='RICE';  th=h*0.8;}
+      else if(h<0.62){tp='PLAIN'; th=h*2.0;}
+      else if(h<0.72){tp='FOREST';th=h*3.5;}
+      else           {tp='HILL';  th=h*6.0;}
+      terrain[z][x]=tp; hmap[z][x]=th;
     }
   }
 }
-
-function buildTerrain(){
-  while(tGrp.children.length) tGrp.remove(tGrp.children[0]);
-  for(const k in tileMM) delete tileMM[k];
-
-  const mats={};
-  for(const k in TDATA) mats[k]=new THREE.MeshLambertMaterial({color:TDATA[k].color});
-
-  for(let z=0;z<GH;z++) for(let x=0;x<GW;x++){
-    const tp=terrain[z][x];
-    const h=Math.max(0.2, hmap[z][x]+0.5);
-    const g=new THREE.BoxGeometry(TS*0.97,h,TS*0.97);
-    const m=new THREE.Mesh(g, mats[tp]);
-    m.position.set(x*TS+TS/2, h/2, z*TS+TS/2);
-    m.receiveShadow=true;
-    m.userData={gx:x,gz:z,isTile:true};
-    tGrp.add(m);
-    tileMM[`${x},${z}`]=m;
-  }
-}
-
-function tileTopY(x,z){
+function tileH(x,z){
   if(x<0||z<0||x>=GW||z>=GH) return 0;
-  return Math.max(0.2,hmap[z][x]+0.5);
+  return Math.max(0, hmap[z][x]+0.4);
 }
 
-// ── Units ──────────────────────────────────────────────────
+// ── ユニット ──
 function mkUnit(gx,gz,type,side,facing){
   const d=UDATA[type];
   const mh=d.hp*(1+Math.random()*.3);
@@ -234,120 +211,27 @@ function mkUnit(gx,gz,type,side,facing){
     hp:mh,maxHp:mh,soldiers:800+Math.floor(Math.random()*400),
     morale:80+Math.floor(Math.random()*20),
     cmd:CMDS[cmdI++%CMDS.length],
-    acted:false,defending:false,mesh:null,arrow:null};
-  units.push(u); mkUMesh(u); return u;
+    acted:false,defending:false};
+  units.push(u); return u;
 }
 
-const PMAT=new THREE.MeshLambertMaterial({color:0x3366dd});
-const EMAT=new THREE.MeshLambertMaterial({color:0xcc2222});
-
-function mkUMesh(u){
-  if(u.mesh){uGrp.remove(u.mesh);}
-  if(u.arrow){arGrp.remove(u.arrow);}
-
-  const ty=tileTopY(u.gx,u.gz);
-  const mat=(u.side==='player'?PMAT:EMAT).clone();
-
-  // Body
-  const body=new THREE.Group();
-  const base=new THREE.Mesh(new THREE.BoxGeometry(1.3,0.9,1.3), mat);
-  base.position.y=0.45;
-  base.castShadow=true;
-  body.add(base);
-  // 凸 top knob
-  const knob=new THREE.Mesh(new THREE.BoxGeometry(0.55,0.35,0.55), mat);
-  knob.position.y=1.075;
-  body.add(knob);
-  // flag pole
-  const pole=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.05,1.2,4),
-    new THREE.MeshLambertMaterial({color:0x8b6020}));
-  pole.position.set(0,1.5,0);
-  body.add(pole);
-  // flag
-  const flag=new THREE.Mesh(new THREE.PlaneGeometry(0.5,0.35),
-    new THREE.MeshBasicMaterial({color:u.side==='player'?0x4488ff:0xff3333,side:THREE.DoubleSide}));
-  flag.position.set(0.25,2.0,0);
-  body.add(flag);
-
-  body.position.set(u.gx*TS+TS/2, ty, u.gz*TS+TS/2);
-  body.userData={unitId:u.id,isUnit:true};
-  uGrp.add(body);
-  u.mesh=body;
-
-  // Direction arrow
-  const acol=u.side==='player'?0x88ccff:0xff8888;
-  const arr=new THREE.Mesh(
-    new THREE.ConeGeometry(0.4,0.8,4),
-    new THREE.MeshBasicMaterial({color:acol}));
-  arr.position.set(u.gx*TS+TS/2, ty+2.4, u.gz*TS+TS/2);
-  setArrowDir(arr, u.facing);
-  arGrp.add(arr);
-  u.arrow=arr;
-}
-
-function setArrowDir(mesh, facing){
-  const ang=(facing/8)*Math.PI*2;
-  mesh.rotation.set(0,0,0);
-  mesh.rotation.z=-Math.PI/2;
-  mesh.rotation.y=-ang+Math.PI/2;
-}
-
-function updateUPos(u){
-  const ty=tileTopY(u.gx,u.gz);
-  if(u.mesh) u.mesh.position.set(u.gx*TS+TS/2, ty, u.gz*TS+TS/2);
-  if(u.arrow){
-    u.arrow.position.set(u.gx*TS+TS/2, ty+2.4, u.gz*TS+TS/2);
-    setArrowDir(u.arrow, u.facing);
-  }
-}
-
-function rmUnit(u){
-  if(u.mesh){uGrp.remove(u.mesh);u.mesh=null;}
-  if(u.arrow){arGrp.remove(u.arrow);u.arrow=null;}
-}
-
-// ── Unit placement ─────────────────────────────────────────
 function placeUnits(){
-  const pTypes=['HONJIN','CAVALRY','CAVALRY','RIFLE','RIFLE','BOW','INFANTRY','INFANTRY','INFANTRY','MIXED'];
-  const eTypes=['HONJIN','CAVALRY','CAVALRY','RIFLE','RIFLE','BOW','INFANTRY','INFANTRY','INFANTRY','MIXED'];
+  const types=['HONJIN','CAVALRY','CAVALRY','RIFLE','RIFLE','BOW','INFANTRY','INFANTRY','INFANTRY','MIXED'];
   const used=new Set();
-  function rndTile(x0,x1,z0,z1){
+  function rnd(x0,x1,z0,z1){
     for(let i=0;i<300;i++){
       const x=x0+Math.floor(Math.random()*(x1-x0));
       const z=z0+Math.floor(Math.random()*(z1-z0));
-      const k=`${x},${z}`;
-      if(!used.has(k)&&terrain[z]&&terrain[z][x]!=='RIVER'){used.add(k);return{x,z};}
+      const k=x+','+z;
+      if(!used.has(k)&&terrain[z][x]!=='RIVER'){used.add(k);return{x,z};}
     }
     return{x:x0,z:z0};
   }
-  pTypes.forEach(t=>{const p=rndTile(2,10,4,28);mkUnit(p.x,p.z,t,'player',2);});
-  eTypes.forEach(t=>{const p=rndTile(22,30,4,28);mkUnit(p.x,p.z,t,'enemy',6);});
+  types.forEach(t=>{const p=rnd(2,10,4,28);mkUnit(p.x,p.z,t,'player',2);});
+  types.forEach(t=>{const p=rnd(22,30,4,28);mkUnit(p.x,p.z,t,'enemy',6);});
 }
 
-// ── Highlights ─────────────────────────────────────────────
-const hlMats={
-  mv: new THREE.MeshBasicMaterial({color:0x2244ee,transparent:true,opacity:.5,depthWrite:false}),
-  at: new THREE.MeshBasicMaterial({color:0xee1111,transparent:true,opacity:.5,depthWrite:false}),
-  sh: new THREE.MeshBasicMaterial({color:0xff8800,transparent:true,opacity:.5,depthWrite:false}),
-  sl: new THREE.MeshBasicMaterial({color:0xffff00,transparent:true,opacity:.6,depthWrite:false}),
-};
-const hlG=new THREE.PlaneGeometry(TS*0.92,TS*0.92);
-
-function clearHL(){
-  while(hlGrp.children.length) hlGrp.remove(hlGrp.children[0]);
-  hlTiles=[];
-}
-function addHL(x,z,t){
-  const y=tileTopY(x,z)+0.08;
-  const m=new THREE.Mesh(hlG,hlMats[t]);
-  m.rotation.x=-Math.PI/2;
-  m.position.set(x*TS+TS/2,y,z*TS+TS/2);
-  m.userData={gx:x,gz:z,ht:t};
-  hlGrp.add(m);
-  hlTiles.push({gx:x,gz:z,t});
-}
-
-// ── Pathfinding ────────────────────────────────────────────
+// ── 経路・範囲 ──
 function mvRange(u){
   let r=UDATA[u.type].mv;
   if(u.soldiers>1500) r=Math.max(1,r-1);
@@ -361,15 +245,16 @@ function mcost(x,z){
 }
 function reachable(u){
   const r=mvRange(u), vis={}, q=[{x:u.gx,z:u.gz,c:0}], res=[];
-  vis[`${u.gx},${u.gz}`]=0;
+  vis[u.gx+','+u.gz]=0;
   while(q.length){
     const cur=q.shift(); if(cur.c>=r) continue;
-    for(const[dx,dz] of [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[1,-1],[-1,1],[1,1]]){
-      const nx=cur.x+dx,nz=cur.z+dz;
+    const dirs=[[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[1,-1],[-1,1],[1,1]];
+    for(let i=0;i<8;i++){
+      const nx=cur.x+dirs[i][0],nz=cur.z+dirs[i][1];
       if(nx<0||nz<0||nx>=GW||nz>=GH) continue;
       const dh=hmap[nz][nx]-hmap[cur.z][cur.x];
-      const c=cur.c+mcost(nx,nz)*0.5+(dh>0?dh*1.5:0);
-      const k=`${nx},${nz}`;
+      const c=cur.c+mcost(nx,nz)*0.5+(dh>0?dh*0.8:0);
+      const k=nx+','+nz;
       if(c<=r&&(vis[k]===undefined||vis[k]>c)){
         vis[k]=c;
         if(!occupied(nx,nz)){res.push({x:nx,z:nz});q.push({x:nx,z:nz,c});}
@@ -378,9 +263,8 @@ function reachable(u){
   }
   return res;
 }
-function mdist(a,b){return Math.abs(a.gx-b.gx)+Math.abs(a.gz-b.gz);}
-function atkTargets(u,range){
-  const r=range||UDATA[u.type].mv; // use explicit 1 for melee
+function mdist(a,b){return Math.max(Math.abs(a.gx-b.gx),Math.abs(a.gz-b.gz));}
+function atkTargets(u){
   return units.filter(o=>o.hp>0&&o.side!==u.side&&mdist(u,o)<=1);
 }
 function shootTargets(u){
@@ -388,10 +272,10 @@ function shootTargets(u){
   return units.filter(o=>o.hp>0&&o.side!==u.side&&mdist(u,o)<=r);
 }
 
-// ── Combat ─────────────────────────────────────────────────
+// ── 戦闘 ──
 function facingMult(att,def){
-  const defAng=(def.facing/8)*Math.PI*2-Math.PI/2;
-  const fromAng=Math.atan2(att.gx-def.gx, att.gz-def.gz);
+  const defAng=(def.facing/8)*Math.PI*2;
+  const fromAng=Math.atan2(att.gx-def.gx, -(att.gz-def.gz));
   let rel=defAng-fromAng;
   while(rel>Math.PI) rel-=Math.PI*2;
   while(rel<-Math.PI) rel+=Math.PI*2;
@@ -400,8 +284,7 @@ function facingMult(att,def){
   return 1.8;
 }
 function htBonus(att,def){
-  const dh=hmap[att.gz][att.gx]-hmap[def.gz][def.gx];
-  return 1+dh*.15;
+  return 1 + (hmap[att.gz][att.gx]-hmap[def.gz][def.gx])*.1;
 }
 function doAtk(att,def){
   const d=UDATA[att.type];
@@ -412,124 +295,133 @@ function doAtk(att,def){
   def.hp=Math.max(0,def.hp-dmg);
   def.morale=Math.max(0,def.morale-Math.floor(dmg*.3));
   const tag=fm>1.5?'【背後！】':fm>1.2?'【側面！】':'';
-  const htag=hb>1.1?'〈高地〉':'';
-  log(`${att.cmd}→${def.cmd}: ${dmg}ダメージ${tag}${htag}`,'c');
-  if(def.hp<=0){log(`${def.cmd}の部隊、壊滅！`,'c');rmUnit(def);}
+  const ht=hb>1.05?'〈高地〉':'';
+  log(`${att.cmd}→${def.cmd}: ${dmg}ダメージ${tag}${ht}`,'c');
+  if(def.hp<=0) log(`${def.cmd}の部隊、壊滅！`,'c');
   updateUDisp();
 }
 
-// ── Actions ────────────────────────────────────────────────
+// ── 行動 ──
 function setAct(a){
   if(!sel||sel.acted||phase!=='player') return;
-  curAct=a; clearHL(); updBtns();
-  addHL(sel.gx,sel.gz,'sl');
-  if(a==='mv') reachable(sel).forEach(t=>addHL(t.x,t.z,'mv'));
-  else if(a==='at') atkTargets(sel).forEach(u=>addHL(u.gx,u.gz,'at'));
-  else if(a==='sh') shootTargets(sel).forEach(u=>addHL(u.gx,u.gz,'sh'));
-  else if(a==='df'){sel.defending=true;sel.acted=true;log(`${sel.cmd}が防御態勢`,'m');curAct=null;clearHL();updUI();}
+  curAct=a; hlTiles=[];
+  if(a==='mv') reachable(sel).forEach(t=>hlTiles.push({gx:t.x,gz:t.z,t:'mv'}));
+  else if(a==='at') atkTargets(sel).forEach(u=>hlTiles.push({gx:u.gx,gz:u.gz,t:'at'}));
+  else if(a==='sh') shootTargets(sel).forEach(u=>hlTiles.push({gx:u.gx,gz:u.gz,t:'sh'}));
+  else if(a==='df'){
+    sel.defending=true;sel.acted=true;
+    log(`${sel.cmd}が防御態勢`,'m');curAct=null;hlTiles=[];
+  }
+  updUI();
 }
 
 function tileClick(gx,gz){
   if(phase!=='player'||over) return;
   const cu=units.find(u=>u.hp>0&&u.gx===gx&&u.gz===gz);
-  if(curAct==='mv'){
-    if(hlTiles.find(h=>h.gx===gx&&h.gz===gz&&h.t==='mv')&&sel){
+  if(curAct==='mv'&&sel){
+    if(hlTiles.some(h=>h.gx===gx&&h.gz===gz&&h.t==='mv')){
       sel.gx=gx;sel.gz=gz;sel.acted=true;
-      updateUPos(sel);log(`${sel.cmd}が移動`,'m');
-      curAct=null;clearHL();addHL(sel.gx,sel.gz,'sl');updUI();return;
+      log(`${sel.cmd}が移動`,'m');
+      curAct=null;hlTiles=[];updUI();return;
     }
-  } else if(curAct==='at'){
+  } else if(curAct==='at'&&sel){
     if(cu&&cu.side!==sel.side&&atkTargets(sel).includes(cu)){
-      doAtk(sel,cu);sel.acted=true;curAct=null;clearHL();addHL(sel.gx,sel.gz,'sl');
+      doAtk(sel,cu);sel.acted=true;curAct=null;hlTiles=[];
       chkVic();updUI();return;
     }
-  } else if(curAct==='sh'){
+  } else if(curAct==='sh'&&sel){
     if(cu&&cu.side!==sel.side&&shootTargets(sel).includes(cu)){
-      doAtk(sel,cu);sel.acted=true;curAct=null;clearHL();addHL(sel.gx,sel.gz,'sl');
+      doAtk(sel,cu);sel.acted=true;curAct=null;hlTiles=[];
       chkVic();updUI();return;
     }
   }
   if(cu&&cu.side==='player'&&cu.hp>0){
-    sel=cu;curAct=null;clearHL();addHL(sel.gx,sel.gz,'sl');updUI();
+    sel=cu;curAct=null;hlTiles=[];updUI();
   }
 }
 
 function rotate(d){
   if(!sel||phase!=='player'||over) return;
   sel.facing=(sel.facing+d+8)%8;
-  updateUPos(sel);log(`${sel.cmd}が${DNAMES[sel.facing]}を向いた`,'m');updUI();
+  log(`${sel.cmd}が${DNAMES[sel.facing]}を向いた`,'m');updUI();
 }
 
-// ── Enemy AI ───────────────────────────────────────────────
-async function enemyTurn(){
+// ── 敵AI ──
+function enemyTurn(){
   log('--- 敵の番 ---','s');
   const enemies=units.filter(u=>u.hp>0&&u.side==='enemy');
-  for(const e of enemies){
-    if(e.hp<=0) continue;
-    await new Promise(r=>setTimeout(r,250));
+  let i=0;
+  function step(){
+    if(over) return;
+    if(i>=enemies.length){ endEnemyTurn(); return; }
+    const e=enemies[i++];
+    if(e.hp<=0){ step(); return; }
     const players=units.filter(u=>u.hp>0&&u.side==='player');
-    if(!players.length) break;
+    if(!players.length){ chkVic(); return; }
     let near=players[0];
     for(const p of players) if(mdist(e,p)<mdist(e,near)) near=p;
-    // face target
+    // 向きを変える
     const dx=near.gx-e.gx, dz=near.gz-e.gz;
-    e.facing=Math.round(((Math.atan2(dz,dx)+Math.PI/2)/(Math.PI*2)*8)+8)%8;
-    updateUPos(e);
-    // shoot
+    e.facing=Math.round((Math.atan2(dx,-dz)/(Math.PI*2)*8)+8)%8;
+    // 射撃
     if(UDATA[e.type].sr){
       const st=shootTargets(e);
-      if(st.length){doAtk(e,st[0]);chkVic();if(over)return;continue;}
+      if(st.length){doAtk(e,st[0]);chkVic();setTimeout(step,250);return;}
     }
-    // melee
+    // 白兵
     const at=atkTargets(e);
     if(at.length){
       let best=at[0],bm=facingMult(e,at[0]);
       for(const t of at){const m=facingMult(e,t);if(m>bm){bm=m;best=t;}}
-      doAtk(e,best);chkVic();if(over)return;continue;
+      doAtk(e,best);chkVic();setTimeout(step,250);return;
     }
-    // move
+    // 移動
     const mv=reachable(e);
     if(mv.length){
       let bt=mv[0],bs=Infinity;
       for(const t of mv){
-        const d=mdist({gx:t.x,gz:t.z},near);
-        const hp=hmap[near.gz][near.gx]-hmap[t.z][t.x];
-        const sc=d-hp*.5;
+        const d=Math.max(Math.abs(t.x-near.gx),Math.abs(t.z-near.gz));
+        const hp2=hmap[near.gz][near.gx]-hmap[t.z][t.x];
+        const sc=d-hp2*.3;
         if(sc<bs){bs=sc;bt=t;}
       }
-      e.gx=bt.x;e.gz=bt.z;updateUPos(e);log(`${e.cmd}が前進`,'m');
+      e.gx=bt.x;e.gz=bt.z;log(`${e.cmd}が前進`,'m');
     }
+    setTimeout(step,200);
   }
-  await new Promise(r=>setTimeout(r,300));
+  step();
+}
+
+function endEnemyTurn(){
   log('--- あなたの番 ---','s');
   turnNum++;phase='player';
   units.forEach(u=>{u.acted=false;u.defending=false;});
-  sel=null;clearHL();updUI();
+  sel=null;hlTiles=[];updUI();
 }
 
 function endTurn(){
   if(phase!=='player'||over) return;
-  sel=null;curAct=null;clearHL();
+  sel=null;curAct=null;hlTiles=[];
   phase='enemy';updUI();
-  setTimeout(enemyTurn,400);
+  setTimeout(enemyTurn,300);
 }
 
 function chkVic(){
+  if(over) return;
   const pa=units.filter(u=>u.hp>0&&u.side==='player');
   const ea=units.filter(u=>u.hp>0&&u.side==='enemy');
   if(!ea.length){showOv('勝利！','敵軍を全滅させた！天下統一！');over=true;}
-  else if(!pa.length){showOv('敗北...','味方部隊が壊滅した。');over=true;}
+  else if(!pa.length){showOv('敗北...','味方部隊が壊滅した。再起を期せ。');over=true;}
 }
 
-// ── UI ─────────────────────────────────────────────────────
-function log(msg,cls=''){
+// ── UI ──
+function log(msg,cls){
   const el=document.getElementById('log');
   const d=document.createElement('div');
   d.className='le '+(cls||''); d.textContent=msg;
   el.insertBefore(d,el.firstChild);
   if(el.children.length>80) el.removeChild(el.lastChild);
 }
-
 function updUI(){
   document.getElementById('t-num').textContent=`第 ${turnNum} ターン`;
   const pi=document.getElementById('t-phase');
@@ -537,27 +429,26 @@ function updUI(){
   pi.style.color=phase==='player'?'#60c060':'#c04040';
   updateUDisp(); updBtns();
 }
-
 function updateUDisp(){
   const el=document.getElementById('ud');
-  if(!sel||sel.hp<=0){el.innerHTML='<span style="color:#604a30;font-size:10px">部隊を選択</span>';return;}
+  if(!sel||sel.hp<=0){el.innerHTML='<span style="color:#604a30;font-size:10px">部隊を選択してください</span>';return;}
   const u=sel, d=UDATA[u.type];
   const hp=Math.round(u.hp/u.maxHp*100);
   const hc=hp>60?'#40c040':hp>30?'#c0c040':'#c04040';
-  const mc=u.morale>60?'#4488ff':u.morale>30?'#8844ff':'#ff4444';
+  const mc2=u.morale>60?'#4488ff':u.morale>30?'#8844ff':'#ff4444';
   el.innerHTML=`
-<div class="sr"><span class="sl">部隊</span><span class="sv">${d.name} ${d.sym}</span></div>
+<div class="sr"><span class="sl">部隊</span><span class="sv">${d.name}</span></div>
 <div class="sr"><span class="sl">武将</span><span class="sv">${u.cmd}</span></div>
 <div class="sr"><span class="sl">兵力</span><span class="sv">${u.soldiers}人</span></div>
 <div class="sr"><span class="sl">HP</span><span class="sv">${hp}%</span></div>
 <div class="bar"><div class="bf" style="width:${hp}%;background:${hc}"></div></div>
 <div class="sr" style="margin-top:3px"><span class="sl">士気</span><span class="sv">${u.morale}</span></div>
-<div class="bar"><div class="bf" style="width:${u.morale}%;background:${mc}"></div></div>
+<div class="bar"><div class="bf" style="width:${u.morale}%;background:${mc2}"></div></div>
 <div class="sr" style="margin-top:3px"><span class="sl">向き</span><span class="sv">${DNAMES[u.facing]}</span></div>
-<div class="sr"><span class="sl">地形</span><span class="sv">${TDATA[terrain[u.gz]?.[u.gx]||'PLAIN'].name}</span></div>
-<div class="sr"><span class="sl">状態</span><span class="sv">${u.defending?'🛡防御':u.acted?'✓済':'待機'}</span></div>`;
+<div class="sr"><span class="sl">地形</span><span class="sv">${TDATA[terrain[u.gz][u.gx]].name}</span></div>
+<div class="sr"><span class="sl">高さ</span><span class="sv">${hmap[u.gz][u.gx].toFixed(1)}</span></div>
+<div class="sr"><span class="sl">状態</span><span class="sv">${u.defending?'防御':u.acted?'行動済':'待機'}</span></div>`;
 }
-
 function updBtns(){
   const ip=phase==='player', hu=sel&&sel.hp>0&&sel.side==='player';
   const ca=hu&&!sel.acted&&ip;
@@ -569,65 +460,334 @@ function updBtns(){
   document.getElementById('b-sh').disabled=!ca||!hs;
   document.getElementById('b-df').disabled=!ca;
   document.getElementById('end-btn').disabled=!ip||over;
-  ['b-mv','b-at','b-sh'].forEach(id=>{
-    const m={'b-mv':'mv','b-at':'at','b-sh':'sh'};
-    document.getElementById(id).classList.toggle('on',m[id]===curAct);
-  });
+  const m={'b-mv':'mv','b-at':'at','b-sh':'sh'};
+  for(const id in m) document.getElementById(id).classList.toggle('on',m[id]===curAct);
 }
-
 function showOv(t,m){
   document.getElementById('ov-title').textContent=t;
   document.getElementById('ov-msg').textContent=m;
   document.getElementById('overlay').style.display='flex';
 }
 
-// ── Input ──────────────────────────────────────────────────
-const keys=new Set();
-addEventListener('keydown',e=>{keys.add(e.key.toLowerCase());if(e.key==='r'||e.key==='R')resetCam();});
-addEventListener('keyup',e=>keys.delete(e.key.toLowerCase()));
-
-function resetCam(){
-  camera.position.set(GW*TS*.5,45,GH*TS*1.0);
-  oc.target.set(GW*TS*.5,2,GH*TS*.5);
-  oc.update();
+// ── 描画 ──
+function shade(col, f){
+  return `rgb(${Math.min(255,col[0]*f)|0},${Math.min(255,col[1]*f)|0},${Math.min(255,col[2]*f)|0})`;
 }
 
-function camKeys(){
-  const sp=0.6, fwd=new THREE.Vector3(); camera.getWorldDirection(fwd); fwd.y=0; fwd.normalize();
-  const rt=new THREE.Vector3().crossVectors(fwd,camera.up).normalize();
-  if(keys.has('w')||keys.has('arrowup')){camera.position.addScaledVector(fwd,sp);oc.target.addScaledVector(fwd,sp);}
-  if(keys.has('s')||keys.has('arrowdown')){camera.position.addScaledVector(fwd,-sp);oc.target.addScaledVector(fwd,-sp);}
-  if(keys.has('a')||keys.has('arrowleft')){camera.position.addScaledVector(rt,-sp);oc.target.addScaledVector(rt,-sp);}
-  if(keys.has('d')||keys.has('arrowright')){camera.position.addScaledVector(rt,sp);oc.target.addScaledVector(rt,sp);}
+function render(){
+  ctx.fillStyle='#1a2535';
+  ctx.fillRect(0,0,CW,CH);
+
+  // 描画アイテム収集（タイル＋ユニット）して奥行きソート
+  const items=[];
+
+  for(let z=0;z<GH;z++) for(let x=0;x<GW;x++){
+    const h=tileH(x,z);
+    const x0=x*TS, x1=(x+1)*TS, z0=z*TS, z1=(z+1)*TS;
+    // 上面4頂点
+    const p00=project(x0,h,z0), p10=project(x1,h,z0),
+          p11=project(x1,h,z1), p01=project(x0,h,z1);
+    if(!p00||!p10||!p11||!p01) continue;
+    // 中心の奥行き
+    const cd=(p00.d+p10.d+p11.d+p01.d)/4;
+    items.push({d:cd, type:'tile', x, z, h, p00, p10, p11, p01});
+  }
+
+  for(const u of units){
+    if(u.hp<=0) continue;
+    const wx=u.gx*TS+TS/2, wz=u.gz*TS+TS/2, h=tileH(u.gx,u.gz);
+    const pc=project(wx,h,wz);
+    if(!pc) continue;
+    items.push({d:pc.d-0.6, type:'unit', u, wx, wz, h});
+  }
+
+  // 奥から手前へ
+  items.sort((a,b)=>b.d-a.d);
+
+  for(const it of items){
+    if(it.type==='tile') drawTile(it);
+    else drawUnit(it);
+  }
 }
 
-// Click handler: raycast against tile + unit meshes
-canvas.addEventListener('click', e=>{
-  if(phase!=='player'||over) return;
-  const rect=canvas.getBoundingClientRect();
-  mouse.x=((e.clientX-rect.left)/rect.width)*2-1;
-  mouse.y=-((e.clientY-rect.top)/rect.height)*2+1;
-  raycaster.setFromCamera(mouse,camera);
+function drawTile(it){
+  const {x,z,h,p00,p10,p11,p01}=it;
+  const col=TDATA[terrain[z][x]].col;
+  // 高さで明るさ変化
+  const br=0.75+h*0.06;
 
-  // Units first
-  const ui=raycaster.intersectObjects(uGrp.children,true);
-  if(ui.length){
-    let obj=ui[0].object;
-    while(obj&&obj.userData.unitId===undefined) obj=obj.parent;
-    if(obj&&obj.userData.unitId!==undefined){
-      const u=units[obj.userData.unitId];
-      if(u&&u.hp>0){tileClick(u.gx,u.gz);return;}
+  // 側面（高さがあれば）— 底面の頂点
+  if(h>0.05){
+    const b00=project(x*TS,0,z*TS), b10=project((x+1)*TS,0,z*TS),
+          b11=project((x+1)*TS,0,(z+1)*TS), b01=project(x*TS,0,(z+1)*TS);
+    if(b00&&b10&&b11&&b01){
+      // 南面 (z+1側)
+      ctx.fillStyle=shade(col,br*0.55);
+      ctx.beginPath();
+      ctx.moveTo(p01.x,p01.y);ctx.lineTo(p11.x,p11.y);
+      ctx.lineTo(b11.x,b11.y);ctx.lineTo(b01.x,b01.y);
+      ctx.closePath();ctx.fill();
+      // 東面 (x+1側)
+      ctx.fillStyle=shade(col,br*0.4);
+      ctx.beginPath();
+      ctx.moveTo(p10.x,p10.y);ctx.lineTo(p11.x,p11.y);
+      ctx.lineTo(b11.x,b11.y);ctx.lineTo(b10.x,b10.y);
+      ctx.closePath();ctx.fill();
+      // 西面・北面（回転時に見える）
+      ctx.fillStyle=shade(col,br*0.45);
+      ctx.beginPath();
+      ctx.moveTo(p00.x,p00.y);ctx.lineTo(p01.x,p01.y);
+      ctx.lineTo(b01.x,b01.y);ctx.lineTo(b00.x,b00.y);
+      ctx.closePath();ctx.fill();
+      ctx.fillStyle=shade(col,br*0.5);
+      ctx.beginPath();
+      ctx.moveTo(p00.x,p00.y);ctx.lineTo(p10.x,p10.y);
+      ctx.lineTo(b10.x,b10.y);ctx.lineTo(b00.x,b00.y);
+      ctx.closePath();ctx.fill();
     }
   }
 
-  // Highlights
-  const hi=raycaster.intersectObjects(hlGrp.children,false);
-  if(hi.length){const{gx,gz}=hi[0].object.userData;tileClick(gx,gz);return;}
+  // 上面
+  ctx.fillStyle=shade(col,br);
+  ctx.beginPath();
+  ctx.moveTo(p00.x,p00.y);ctx.lineTo(p10.x,p10.y);
+  ctx.lineTo(p11.x,p11.y);ctx.lineTo(p01.x,p01.y);
+  ctx.closePath();ctx.fill();
+  ctx.strokeStyle='rgba(0,0,0,0.12)';
+  ctx.lineWidth=0.5;
+  ctx.stroke();
 
-  // Terrain
-  const ti=raycaster.intersectObjects(tGrp.children,false);
-  if(ti.length){const{gx,gz}=ti[0].object.userData;tileClick(gx,gz);}
+  // 林の木
+  if(terrain[z][x]==='FOREST'){
+    const tw=project(x*TS+TS/2, h+1.2, z*TS+TS/2);
+    const tb=project(x*TS+TS/2, h, z*TS+TS/2);
+    if(tw&&tb){
+      const r=(tb.y-tw.y)*0.55;
+      if(r>1){
+        ctx.fillStyle='#1d4a1d';
+        ctx.beginPath();ctx.arc(tw.x,tw.y,r,0,Math.PI*2);ctx.fill();
+      }
+    }
+  }
+
+  // ハイライト
+  const hl=hlTiles.find(t=>t.gx===x&&t.gz===z);
+  const isSel=sel&&sel.gx===x&&sel.gz===z;
+  if(hl||isSel){
+    const colm={mv:'rgba(50,90,255,0.45)',at:'rgba(255,30,30,0.5)',sh:'rgba(255,140,0,0.5)'};
+    ctx.fillStyle=isSel&&!hl?'rgba(255,255,0,0.4)':colm[hl.t];
+    ctx.beginPath();
+    ctx.moveTo(p00.x,p00.y);ctx.lineTo(p10.x,p10.y);
+    ctx.lineTo(p11.x,p11.y);ctx.lineTo(p01.x,p01.y);
+    ctx.closePath();ctx.fill();
+  }
+}
+
+function drawUnit(it){
+  const {u,wx,wz,h}=it;
+  const isP=u.side==='player';
+  const sel2=sel===u;
+  let body, dark;
+  if(isP){
+    body=u.acted?[26,48,96]:sel2?[90,140,255]:[50,100,220];
+    dark=u.acted?[16,30,64]:[30,60,150];
+  } else {
+    body=[205,40,40]; dark=[140,25,25];
+  }
+
+  // 凸ボディ: 底箱 (1.6 x 0.9 x 1.6) + 上ノブ
+  const bw=0.8, bh=0.9, kw=0.35, kh=0.45;
+  // 8頂点（底箱）
+  const c=[
+    project(wx-bw,h,wz-bw), project(wx+bw,h,wz-bw),
+    project(wx+bw,h,wz+bw), project(wx-bw,h,wz+bw),
+    project(wx-bw,h+bh,wz-bw), project(wx+bw,h+bh,wz-bw),
+    project(wx+bw,h+bh,wz+bw), project(wx-bw,h+bh,wz+bw),
+  ];
+  if(c.some(p=>!p)) return;
+
+  function quad(a,b2,c2,d2,fill){
+    ctx.fillStyle=fill;
+    ctx.beginPath();
+    ctx.moveTo(a.x,a.y);ctx.lineTo(b2.x,b2.y);
+    ctx.lineTo(c2.x,c2.y);ctx.lineTo(d2.x,d2.y);
+    ctx.closePath();ctx.fill();
+    ctx.strokeStyle='rgba(0,0,0,0.35)';ctx.lineWidth=0.7;ctx.stroke();
+  }
+
+  // 側面4面（奥→手前ソートのため全部描いても painter's でOK; 平均奥行きで2面ずつ）
+  const faces=[
+    {pts:[c[0],c[1],c[5],c[4]], col:dark},  // 北
+    {pts:[c[1],c[2],c[6],c[5]], col:dark},  // 東
+    {pts:[c[2],c[3],c[7],c[6]], col:dark},  // 南
+    {pts:[c[3],c[0],c[4],c[7]], col:dark},  // 西
+  ];
+  faces.sort((a,b2)=>{
+    const da=a.pts.reduce((s,p)=>s+p.d,0), db=b2.pts.reduce((s,p)=>s+p.d,0);
+    return db-da;
+  });
+  for(const f of faces) quad(f.pts[0],f.pts[1],f.pts[2],f.pts[3],shade(f.col,1));
+
+  // 上面
+  quad(c[4],c[5],c[6],c[7],shade(body,1));
+
+  // 凸ノブ
+  const k=[
+    project(wx-kw,h+bh,wz-kw), project(wx+kw,h+bh,wz-kw),
+    project(wx+kw,h+bh,wz+kw), project(wx-kw,h+bh,wz+kw),
+    project(wx-kw,h+bh+kh,wz-kw), project(wx+kw,h+bh+kh,wz-kw),
+    project(wx+kw,h+bh+kh,wz+kw), project(wx-kw,h+bh+kh,wz+kw),
+  ];
+  if(!k.some(p=>!p)){
+    const kf=[
+      {pts:[k[0],k[1],k[5],k[4]]},{pts:[k[1],k[2],k[6],k[5]]},
+      {pts:[k[2],k[3],k[7],k[6]]},{pts:[k[3],k[0],k[4],k[7]]},
+    ];
+    kf.sort((a,b2)=>{
+      const da=a.pts.reduce((s,p)=>s+p.d,0), db=b2.pts.reduce((s,p)=>s+p.d,0);
+      return db-da;
+    });
+    for(const f of kf) quad(f.pts[0],f.pts[1],f.pts[2],f.pts[3],shade(dark,1.1));
+    quad(k[4],k[5],k[6],k[7],shade(body,1.15));
+  }
+
+  // 向き矢印（地面に三角形）
+  const ang=(u.facing/8)*Math.PI*2; // 0=北(-z)
+  const fx=Math.sin(ang), fz=-Math.cos(ang);
+  const ax=wx+fx*1.6, az=wz+fz*1.6;
+  const lx=-fz, lz=fx;
+  const t1=project(ax+fx*0.5, h+0.06, az+fz*0.5);
+  const t2=project(ax-fx*0.3+lx*0.45, h+0.06, az-fz*0.3+lz*0.45);
+  const t3=project(ax-fx*0.3-lx*0.45, h+0.06, az-fz*0.3-lz*0.45);
+  if(t1&&t2&&t3){
+    ctx.fillStyle=isP?'rgba(130,200,255,0.95)':'rgba(255,140,140,0.95)';
+    ctx.beginPath();
+    ctx.moveTo(t1.x,t1.y);ctx.lineTo(t2.x,t2.y);ctx.lineTo(t3.x,t3.y);
+    ctx.closePath();ctx.fill();
+  }
+
+  // 旗＋兵種記号
+  const pt=project(wx,h+bh+kh+1.3,wz);
+  const pb=project(wx,h+bh+kh,wz);
+  if(pt&&pb){
+    ctx.strokeStyle='#8b6020';ctx.lineWidth=1.5;
+    ctx.beginPath();ctx.moveTo(pb.x,pb.y);ctx.lineTo(pt.x,pt.y);ctx.stroke();
+    const fh=(pb.y-pt.y)*0.45;
+    if(fh>3){
+      ctx.fillStyle=isP?'#3878ff':'#ff3838';
+      ctx.fillRect(pt.x,pt.y,fh*1.4,fh);
+      ctx.fillStyle='#fff';
+      ctx.font=`bold ${Math.max(6,fh*0.8)|0}px sans-serif`;
+      ctx.textAlign='center';ctx.textBaseline='middle';
+      ctx.fillText(UDATA[u.type].sym, pt.x+fh*0.7, pt.y+fh*0.5);
+    }
+  }
+
+  // HPバー
+  const hb1=project(wx,h+bh+kh+1.7,wz);
+  if(hb1){
+    const w=Math.max(10,800/hb1.d);
+    const pct=u.hp/u.maxHp;
+    ctx.fillStyle='#222';
+    ctx.fillRect(hb1.x-w/2,hb1.y-2,w,3);
+    ctx.fillStyle=pct>0.6?'#3c3':pct>0.3?'#cc3':'#c33';
+    ctx.fillRect(hb1.x-w/2,hb1.y-2,w*pct,3);
+  }
+}
+
+// ── ピッキング（クリック位置→タイル） ──
+function pick(mx,my){
+  // ユニット優先: スクリーン距離で判定
+  let bestU=null, bestD=24;
+  for(const u of units){
+    if(u.hp<=0) continue;
+    const p=project(u.gx*TS+TS/2, tileH(u.gx,u.gz)+0.8, u.gz*TS+TS/2);
+    if(!p) continue;
+    const d=Math.hypot(p.x-mx,p.y-my);
+    if(d<bestD){bestD=d;bestU=u;}
+  }
+  if(bestU) return {gx:bestU.gx, gz:bestU.gz};
+
+  // タイル: 上面ポリゴン内判定を手前から
+  const cands=[];
+  for(let z=0;z<GH;z++) for(let x=0;x<GW;x++){
+    const h=tileH(x,z);
+    const p00=project(x*TS,h,z*TS), p10=project((x+1)*TS,h,z*TS),
+          p11=project((x+1)*TS,h,(z+1)*TS), p01=project(x*TS,h,(z+1)*TS);
+    if(!p00||!p10||!p11||!p01) continue;
+    if(ptInQuad(mx,my,p00,p10,p11,p01)){
+      cands.push({x,z,d:(p00.d+p11.d)/2});
+    }
+  }
+  if(cands.length){
+    cands.sort((a,b)=>a.d-b.d);
+    return {gx:cands[0].x, gz:cands[0].z};
+  }
+  return null;
+}
+function ptInQuad(px,py,a,b,c,d){
+  return ptInTri(px,py,a,b,c)||ptInTri(px,py,a,c,d);
+}
+function ptInTri(px,py,a,b,c){
+  const s1=(b.x-a.x)*(py-a.y)-(b.y-a.y)*(px-a.x);
+  const s2=(c.x-b.x)*(py-b.y)-(c.y-b.y)*(px-b.x);
+  const s3=(a.x-c.x)*(py-c.y)-(a.y-c.y)*(px-c.x);
+  return (s1>=0&&s2>=0&&s3>=0)||(s1<=0&&s2<=0&&s3<=0);
+}
+
+// ── 入力 ──
+const keys=new Set();
+addEventListener('keydown',e=>{
+  keys.add(e.key.toLowerCase());
+  if(e.key==='r'||e.key==='R') resetCam();
 });
+addEventListener('keyup',e=>keys.delete(e.key.toLowerCase()));
+
+let dragging=false, dragBtn=0, lastX=0, lastY=0, moved=false;
+cv.addEventListener('mousedown',e=>{
+  dragging=true; dragBtn=e.button; lastX=e.clientX; lastY=e.clientY; moved=false;
+  cv.classList.add('dragging');
+});
+addEventListener('mousemove',e=>{
+  if(!dragging) return;
+  const dx=e.clientX-lastX, dy=e.clientY-lastY;
+  if(Math.abs(dx)+Math.abs(dy)>3) moved=true;
+  lastX=e.clientX; lastY=e.clientY;
+  if(dragBtn===2||dragBtn===1||e.ctrlKey){
+    // 視点回転
+    cam.yaw += dx*0.008;
+    cam.pitch = Math.max(0.25, Math.min(1.45, cam.pitch + dy*0.006));
+  } else if(moved){
+    // 左ドラッグはパン
+    const s=cam.dist/600;
+    const cy=Math.cos(cam.yaw), sy=Math.sin(cam.yaw);
+    cam.tx -= (dx*cy - dy*sy)*s;
+    cam.tz -= (dx*sy + dy*cy)*s;
+  }
+});
+addEventListener('mouseup',e=>{
+  if(dragging&&!moved&&dragBtn===0){
+    const r=cv.getBoundingClientRect();
+    const hit=pick(e.clientX-r.left, e.clientY-r.top);
+    if(hit) tileClick(hit.gx, hit.gz);
+  }
+  dragging=false;
+  cv.classList.remove('dragging');
+});
+cv.addEventListener('contextmenu',e=>e.preventDefault());
+cv.addEventListener('wheel',e=>{
+  e.preventDefault();
+  cam.dist=Math.max(15,Math.min(200,cam.dist*(e.deltaY>0?1.1:0.9)));
+},{passive:false});
+
+function camKeys(){
+  const s=cam.dist*0.012;
+  const cy=Math.cos(cam.yaw), sy=Math.sin(cam.yaw);
+  if(keys.has('w')||keys.has('arrowup')){cam.tx+=sy*s;cam.tz-=cy*s;}
+  if(keys.has('s')||keys.has('arrowdown')){cam.tx-=sy*s;cam.tz+=cy*s;}
+  if(keys.has('a')||keys.has('arrowleft')){cam.tx-=cy*s;cam.tz-=sy*s;}
+  if(keys.has('d')||keys.has('arrowright')){cam.tx+=cy*s;cam.tz+=sy*s;}
+}
 
 document.getElementById('b-mv').addEventListener('click',()=>setAct('mv'));
 document.getElementById('b-rl').addEventListener('click',()=>rotate(-1));
@@ -636,62 +796,30 @@ document.getElementById('b-at').addEventListener('click',()=>setAct('at'));
 document.getElementById('b-sh').addEventListener('click',()=>setAct('sh'));
 document.getElementById('b-df').addEventListener('click',()=>setAct('df'));
 document.getElementById('end-btn').addEventListener('click',endTurn);
-
-// ── Resize ─────────────────────────────────────────────────
-function onResize(){
-  const w=wrap.clientWidth, h=wrap.clientHeight;
-  if(w===0||h===0) return;
-  renderer.setSize(w,h);
-  camera.aspect=w/h;
-  camera.updateProjectionMatrix();
-}
-window.addEventListener('resize',onResize);
-
-// ── Game init ──────────────────────────────────────────────
-function startGame(){
-  over=false; turnNum=1; phase='player'; sel=null; curAct=null; cmdI=0;
-  units.forEach(rmUnit); units=[];
-  clearHL();
-  genTerrain(); buildTerrain(); placeUnits();
-  log('--- 合戦開始！ ---','s');
-  log('部隊を選んで指揮を執れ！','s');
-  updUI();
-}
-
-// ── Render loop ────────────────────────────────────────────
-function animate(){
-  requestAnimationFrame(animate);
-  camKeys(); oc.update();
-  // Tint acted units
-  for(const u of units){
-    if(!u.mesh) continue;
-    u.mesh.traverse(o=>{
-      if(!o.isMesh||!o.material?.color) return;
-      if(u.side==='player'){
-        const base=sel===u?0x5588ff:0x3366dd;
-        o.material.color.setHex(u.acted?0x1a3060:base);
-      } else {
-        o.material.color.setHex(0xcc2222);
-      }
-    });
-  }
-  renderer.render(scene,camera);
-}
-
-// ── Boot ───────────────────────────────────────────────────
-// Use rAF to ensure layout is complete before sizing
 document.getElementById('ov-btn').addEventListener('click',()=>{
   document.getElementById('overlay').style.display='none';
   startGame();
 });
 
-requestAnimationFrame(()=>{
-  requestAnimationFrame(()=>{
-    onResize();
-    animate();
-    startGame(); // 即スタート
-  });
-});
+// ── 起動 ──
+function startGame(){
+  over=false; turnNum=1; phase='player'; sel=null; curAct=null; cmdI=0;
+  units=[]; hlTiles=[];
+  genTerrain(); placeUnits(); resetCam();
+  log('--- 合戦開始！ ---','s');
+  log('部隊をクリックして指揮を執れ！','s');
+  updUI();
+}
+
+function loop(){
+  camKeys();
+  render();
+  requestAnimationFrame(loop);
+}
+
+onResize();
+startGame();
+loop();
 </script>
 </body>
 </html>
