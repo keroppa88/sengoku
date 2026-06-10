@@ -370,26 +370,31 @@ function mcost(x,z){
   return TDATA[terrain[z][x]].mc;
 }
 function reachable(u){
-  const r=mvRange(u), vis={}, q=[{x:u.gx,z:u.gz,c:0}], res=[];
-  vis[u.gx+','+u.gz]=0;
+  const r=mvRange(u), best={}, q=[{x:u.gx,z:u.gz,c:0}], res=[];
+  const dirs=[[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[1,-1],[-1,1],[1,1]];
+  best[u.gx+','+u.gz]=0;
   while(q.length){
-    const cur=q.shift(); if(cur.c>=r) continue;
-    const dirs=[[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[1,-1],[-1,1],[1,1]];
+    const cur=q.shift();
+    if(cur.c>best[cur.x+','+cur.z]) continue; // stale entry
+    if(cur.c>=r) continue;
     for(let i=0;i<8;i++){
       const nx=cur.x+dirs[i][0],nz=cur.z+dirs[i][1];
       if(nx<0||nz<0||nx>=GW||nz>=GH) continue;
       const dh=hmap[nz][nx]-hmap[cur.z][cur.x];
-      // 1マス = 地形の移動コスト（平地1）。斜め移動は×1.4、登り坂は追加コスト
       const diag=(dirs[i][0]!==0&&dirs[i][1]!==0)?1.4:1.0;
       const c=cur.c+mcost(nx,nz)*diag+(dh>0?dh*1.5:0);
       const k=nx+','+nz;
-      if(c<=r&&(vis[k]===undefined||vis[k]>c)){
-        vis[k]=c;
-        if(!occupied(nx,nz)){res.push({x:nx,z:nz});q.push({x:nx,z:nz,c});}
+      if(c<=r&&(best[k]===undefined||best[k]>c)){
+        best[k]=c;
+        q.push({x:nx,z:nz,c});
+        if(!occupied(nx,nz)) res.push({x:nx,z:nz});
       }
     }
   }
-  return res;
+  // deduplicate res (keep best-cost entry per tile)
+  const seen=new Set(), dedup=[];
+  for(const t of res){const k=t.x+','+t.z;if(!seen.has(k)){seen.add(k);dedup.push(t);}}
+  return dedup;
 }
 function mdist(a,b){return Math.max(Math.abs(a.gx-b.gx),Math.abs(a.gz-b.gz));}
 function atkTargets(u){
