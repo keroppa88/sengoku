@@ -471,7 +471,10 @@ function doAtk(att, def, isRanged){
   // 防御力（地形 × 方向減衰 × 防御態勢）— 射撃にも方向減衰を適用
   const decay  = facingDecay(att, def);
   const stance = def.defending ? 2.0 : 1.0;
-  const defPow = dd.def * (def.str||1) * tDef.defM * decay * stance;
+  // 包囲ペナルティ: 隣接する敵数で防御力を減衰
+  const adjEnemies = units.filter(u=>u.hp>0&&u.side!==def.side&&mdist(u,def)<=1).length;
+  const surround = adjEnemies>=5 ? 0.3 : adjEnemies>=4 ? 0.5 : adjEnemies>=3 ? 0.7 : 1.0;
+  const defPow = dd.def * (def.str||1) * tDef.defM * decay * stance * surround;
 
   const dmg = Math.max(1, Math.floor(atkPow - defPow*0.5));
 
@@ -483,6 +486,7 @@ function doAtk(att, def, isRanged){
   else if(decay<0.8) tags.push('側面攻撃');
   if(alt>1.1) tags.push('高地有利');
   else if(alt<0.9) tags.push('高地不利');
+  if(surround<1.0) tags.push(`包囲${adjEnemies}方向`);
   const tagStr=tags.length?`【${tags.join('・')}】`:'';
   log(`${att.cmd}→${def.cmd}: ${dmg}ダメージ${tagStr}`,'c');
   if(def.hp<=0) log(`${def.cmd}の部隊、壊滅！`,'c');
