@@ -359,7 +359,7 @@ function placeUnits(){
 
 // ── 経路・範囲 ──
 function mvRange(u){
-  let r=UDATA[u.type].mv;
+  let r=UDATA[u.type].mv/2;  // 移動力は半減して適用
   if(u.soldiers>1500) r=Math.max(1,r-1);
   if(u.morale<40) r=Math.max(1,r-1);
   return r;
