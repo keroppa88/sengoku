@@ -456,20 +456,30 @@ const _ac=(()=>{try{return new(window.AudioContext||window.webkitAudioContext)()
 function _resume(){if(_ac&&_ac.state==='suspended')_ac.resume();}
 
 function sndCharge(){
-  // ザザザザザ — 騎馬突撃: ノイズバースト連打
+  // パパパッ パパパッ — 馬の蹄: 3連打×グループを繰り返す
   if(!_ac)return; _resume();
-  const dur=4.0, rate=12, now=_ac.currentTime;
-  for(let i=0;i<dur*rate;i++){
-    const t=now+i/rate;
-    const buf=_ac.createBuffer(1,_ac.sampleRate*0.08,_ac.sampleRate);
-    const d=buf.getChannelData(0);
-    for(let j=0;j<d.length;j++) d[j]=(Math.random()*2-1)*(1-j/d.length);
-    const src=_ac.createBufferSource();
-    src.buffer=buf;
-    const flt=_ac.createBiquadFilter(); flt.type='bandpass'; flt.frequency.value=800+Math.random()*400;
-    const g=_ac.createGain(); g.gain.setValueAtTime(0.28,t); g.gain.linearRampToValueAtTime(0,t+0.08);
-    src.connect(flt); flt.connect(g); g.connect(_ac.destination);
-    src.start(t);
+  const now=_ac.currentTime;
+  const groupInterval=0.55; // グループ間隔
+  const groups=7;           // 4秒で7グループ
+  for(let g=0;g<groups;g++){
+    const gt=now+g*groupInterval;
+    // 3連打: パ パ パッ（だんだん強く）
+    [0, 0.13, 0.26].forEach((offset,k)=>{
+      const t=gt+offset;
+      const len=0.09+k*0.01;
+      const buf=_ac.createBuffer(1,Math.ceil(_ac.sampleRate*len),_ac.sampleRate);
+      const d=buf.getChannelData(0);
+      for(let j=0;j<d.length;j++){
+        const env=Math.pow(1-j/d.length,0.6);
+        d[j]=(Math.random()*2-1)*env;
+      }
+      const src=_ac.createBufferSource(); src.buffer=buf;
+      const lp=_ac.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=600;
+      const hp=_ac.createBiquadFilter(); hp.type='highpass'; hp.frequency.value=120;
+      const vol=_ac.createGain(); vol.gain.value=0.25+k*0.12;
+      src.connect(lp); lp.connect(hp); hp.connect(vol); vol.connect(_ac.destination);
+      src.start(t);
+    });
   }
 }
 function sndMelee(){
@@ -489,22 +499,22 @@ function sndMelee(){
   }
 }
 function sndRifle(){
-  // パンパンパン — 鉄砲: 鋭いインパルス+残響
+  // パン — 鉄砲: 乾いた爆発音（超短いインパルス＋急速減衰）
   if(!_ac)return; _resume();
-  const dur=4.0, rate=3.5, now=_ac.currentTime;
+  const dur=4.0, rate=3, now=_ac.currentTime;
   for(let i=0;i<Math.floor(dur*rate);i++){
-    const t=now+i/rate+Math.random()*0.06;
-    // 衝撃
-    const osc=_ac.createOscillator(); osc.type='sawtooth'; osc.frequency.setValueAtTime(180,t); osc.frequency.exponentialRampToValueAtTime(60,t+0.15);
-    const buf=_ac.createBuffer(1,_ac.sampleRate*0.15,_ac.sampleRate);
-    const d=buf.getChannelData(0); for(let j=0;j<d.length;j++) d[j]=Math.random()*2-1;
-    const ns=_ac.createBufferSource(); ns.buffer=buf;
-    const nf=_ac.createBiquadFilter(); nf.type='bandpass'; nf.frequency.value=2000;
-    const g=_ac.createGain(); g.gain.setValueAtTime(0.6,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.18);
-    const go=_ac.createGain(); go.gain.setValueAtTime(0.4,t); go.gain.exponentialRampToValueAtTime(0.001,t+0.18);
-    osc.connect(go); go.connect(_ac.destination);
-    ns.connect(nf); nf.connect(g); g.connect(_ac.destination);
-    osc.start(t); osc.stop(t+0.18); ns.start(t);
+    const t=now+i/rate+Math.random()*0.04;
+    // 極短インパルス（ホワイトノイズ＋急速指数減衰）→ 乾いたパン
+    const slen=Math.ceil(_ac.sampleRate*0.25);
+    const buf=_ac.createBuffer(1,slen,_ac.sampleRate);
+    const d=buf.getChannelData(0);
+    for(let j=0;j<slen;j++) d[j]=(Math.random()*2-1)*Math.exp(-j/(slen*0.04));
+    const src=_ac.createBufferSource(); src.buffer=buf;
+    // ハイパスで低域を切る → 締まった乾いた音
+    const hp=_ac.createBiquadFilter(); hp.type='highpass'; hp.frequency.value=1200;
+    const vol=_ac.createGain(); vol.gain.value=0.9;
+    src.connect(hp); hp.connect(vol); vol.connect(_ac.destination);
+    src.start(t);
   }
 }
 function sndBow(){
