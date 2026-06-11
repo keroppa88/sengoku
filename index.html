@@ -451,7 +451,91 @@ function altMult(att,def){
   return 1.0;
 }
 
+// ── サウンド合成 ──
+const _ac=(()=>{try{return new(window.AudioContext||window.webkitAudioContext)();}catch(e){return null;}})();
+function _resume(){if(_ac&&_ac.state==='suspended')_ac.resume();}
+
+function sndCharge(){
+  // ザザザザザ — 騎馬突撃: ノイズバースト連打
+  if(!_ac)return; _resume();
+  const dur=4.0, rate=12, now=_ac.currentTime;
+  for(let i=0;i<dur*rate;i++){
+    const t=now+i/rate;
+    const buf=_ac.createBuffer(1,_ac.sampleRate*0.08,_ac.sampleRate);
+    const d=buf.getChannelData(0);
+    for(let j=0;j<d.length;j++) d[j]=(Math.random()*2-1)*(1-j/d.length);
+    const src=_ac.createBufferSource();
+    src.buffer=buf;
+    const flt=_ac.createBiquadFilter(); flt.type='bandpass'; flt.frequency.value=800+Math.random()*400;
+    const g=_ac.createGain(); g.gain.setValueAtTime(0.28,t); g.gain.linearRampToValueAtTime(0,t+0.08);
+    src.connect(flt); flt.connect(g); g.connect(_ac.destination);
+    src.start(t);
+  }
+}
+function sndMelee(){
+  // ガッガッガッ — 通常攻撃: 低域ノイズバースト
+  if(!_ac)return; _resume();
+  const dur=4.0, rate=5, now=_ac.currentTime;
+  for(let i=0;i<dur*rate;i++){
+    const t=now+i/rate+Math.random()*0.04;
+    const buf=_ac.createBuffer(1,_ac.sampleRate*0.12,_ac.sampleRate);
+    const d=buf.getChannelData(0);
+    for(let j=0;j<d.length;j++) d[j]=(Math.random()*2-1)*Math.pow(1-j/d.length,1.5);
+    const src=_ac.createBufferSource(); src.buffer=buf;
+    const flt=_ac.createBiquadFilter(); flt.type='lowpass'; flt.frequency.value=400;
+    const g=_ac.createGain(); g.gain.setValueAtTime(0.5,t); g.gain.linearRampToValueAtTime(0,t+0.12);
+    src.connect(flt); flt.connect(g); g.connect(_ac.destination);
+    src.start(t);
+  }
+}
+function sndRifle(){
+  // パンパンパン — 鉄砲: 鋭いインパルス+残響
+  if(!_ac)return; _resume();
+  const dur=4.0, rate=3.5, now=_ac.currentTime;
+  for(let i=0;i<Math.floor(dur*rate);i++){
+    const t=now+i/rate+Math.random()*0.06;
+    // 衝撃
+    const osc=_ac.createOscillator(); osc.type='sawtooth'; osc.frequency.setValueAtTime(180,t); osc.frequency.exponentialRampToValueAtTime(60,t+0.15);
+    const buf=_ac.createBuffer(1,_ac.sampleRate*0.15,_ac.sampleRate);
+    const d=buf.getChannelData(0); for(let j=0;j<d.length;j++) d[j]=Math.random()*2-1;
+    const ns=_ac.createBufferSource(); ns.buffer=buf;
+    const nf=_ac.createBiquadFilter(); nf.type='bandpass'; nf.frequency.value=2000;
+    const g=_ac.createGain(); g.gain.setValueAtTime(0.6,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.18);
+    const go=_ac.createGain(); go.gain.setValueAtTime(0.4,t); go.gain.exponentialRampToValueAtTime(0.001,t+0.18);
+    osc.connect(go); go.connect(_ac.destination);
+    ns.connect(nf); nf.connect(g); g.connect(_ac.destination);
+    osc.start(t); osc.stop(t+0.18); ns.start(t);
+  }
+}
+function sndBow(){
+  // ヒュヒュヒュ — 弓: 高域スイープ
+  if(!_ac)return; _resume();
+  const dur=4.0, rate=4, now=_ac.currentTime;
+  for(let i=0;i<dur*rate;i++){
+    const t=now+i/rate+Math.random()*0.05;
+    const osc=_ac.createOscillator(); osc.type='sine';
+    osc.frequency.setValueAtTime(1800,t); osc.frequency.linearRampToValueAtTime(400,t+0.18);
+    const buf=_ac.createBuffer(1,_ac.sampleRate*0.18,_ac.sampleRate);
+    const d=buf.getChannelData(0); for(let j=0;j<d.length;j++) d[j]=(Math.random()*2-1)*0.3;
+    const ns=_ac.createBufferSource(); ns.buffer=buf;
+    const nf=_ac.createBiquadFilter(); nf.type='highpass'; nf.frequency.value=3000;
+    const g=_ac.createGain(); g.gain.setValueAtTime(0.18,t); g.gain.linearRampToValueAtTime(0,t+0.18);
+    const go=_ac.createGain(); go.gain.setValueAtTime(0.22,t); go.gain.linearRampToValueAtTime(0,t+0.18);
+    osc.connect(go); go.connect(_ac.destination);
+    ns.connect(nf); nf.connect(g); g.connect(_ac.destination);
+    osc.start(t); osc.stop(t+0.18); ns.start(t);
+  }
+}
+
+function playAtkSound(att, isRanged, isCharge){
+  if(isCharge) return sndCharge();
+  if(isRanged && att.type==='RIFLE') return sndRifle();
+  if(isRanged && att.type==='BOW')   return sndBow();
+  sndMelee();
+}
+
 function doAtk(att, def, isRanged, isCharge){
+  playAtkSound(att, isRanged, isCharge);
   const da=UDATA[att.type], dd=UDATA[def.type];
   const tDef=TDATA[terrain[def.gz][def.gx]];
   const tAtt=TDATA[terrain[att.gz][att.gx]];
@@ -1064,6 +1148,7 @@ function applyInertia(){
   cam.tz=Math.max(-mgn,Math.min(GH*TS+mgn,cam.tz));
 }
 
+document.addEventListener('pointerdown',_resume,{once:true});
 document.getElementById('b-mv').addEventListener('click',()=>setAct('mv'));
 document.getElementById('b-rl').addEventListener('click',()=>rotate(-1));
 document.getElementById('b-rr').addEventListener('click',()=>rotate(1));
