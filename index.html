@@ -126,14 +126,14 @@ const TDATA = {
 
 // mv=移動力, atk=攻撃力, def=防御力, sh=射撃力, sr=射程
 const UDATA = {
-  // 兵力(HP)は全ユニット共通
-  HONJIN:   {name:'本陣',   sym:'本', hp:100, atk:10, def:12, mv:8,  sh:12, sr:4 },
-  HATAMOTO: {name:'旗本',   sym:'旗', hp:100, atk:12, def:12, mv:12, sh:12, sr:4 },
-  CAVALRY:  {name:'騎馬',   sym:'馬', hp:100, atk:15, def:12, mv:20, sh:0,  sr:0 },
-  RIFLE:    {name:'鉄砲足軽',sym:'銃', hp:100, atk:5,  def:7,  mv:8,  sh:25, sr:4 },
-  BOW:      {name:'弓足軽', sym:'弓', hp:100, atk:5,  def:7,  mv:8,  sh:15, sr:4 },
-  INFANTRY: {name:'足軽',   sym:'足', hp:100, atk:8,  def:8,  mv:8,  sh:0,  sr:0 },
-  RABBLE:   {name:'烏合衆', sym:'衆', hp:100, atk:5,  def:5,  mv:6,  sh:0,  sr:0 },
+  // HP統一: 全ユニット50
+  HONJIN:   {name:'本陣',   sym:'本', hp:50, atk:10, def:12, mv:8,  sh:12, sr:4 },
+  HATAMOTO: {name:'旗本',   sym:'旗', hp:50, atk:12, def:12, mv:12, sh:12, sr:4 },
+  CAVALRY:  {name:'騎馬',   sym:'馬', hp:50, atk:15, def:12, mv:20, sh:0,  sr:0 },
+  RIFLE:    {name:'鉄砲足軽',sym:'銃', hp:50, atk:5,  def:7,  mv:8,  sh:25, sr:4 },
+  BOW:      {name:'弓足軽', sym:'弓', hp:50, atk:5,  def:7,  mv:8,  sh:15, sr:4 },
+  INFANTRY: {name:'足軽',   sym:'足', hp:50, atk:8,  def:8,  mv:8,  sh:0,  sr:0 },
+  RABBLE:   {name:'烏合衆', sym:'衆', hp:50, atk:5,  def:5,  mv:6,  sh:0,  sr:0 },
 };
 
 // 軍編成: 各武将は強さ倍率(str)を持ち、攻撃・防御・射撃に掛かる
@@ -571,7 +571,7 @@ function doAtk(att, def, isRanged, isCharge){
   const surround = adjEnemies>=5 ? 0.3 : adjEnemies>=4 ? 0.5 : adjEnemies>=3 ? 0.7 : 1.0;
   const defPow = dd.def * (def.str||1) * tDef.defM * decay * stance * surround;
 
-  const dmg = Math.max(1, Math.floor(atkPow - defPow*0.5));
+  const dmg = Math.max(2, Math.floor(atkPow - defPow*0.35));
 
   def.hp    = Math.max(0, def.hp - dmg);
   def.morale= Math.max(0, def.morale - Math.floor(dmg*0.25));
