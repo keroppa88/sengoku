@@ -544,6 +544,59 @@ function playAtkSound(att, isRanged, isCharge){
   sndMelee();
 }
 
+function sndDestroy(){
+  // ボンッ — 部隊壊滅: 低域の重い爆発音
+  if(!_ac)return; _resume();
+  const now=_ac.currentTime;
+  const slen=Math.ceil(_ac.sampleRate*0.8);
+  const buf=_ac.createBuffer(1,slen,_ac.sampleRate);
+  const d=buf.getChannelData(0);
+  for(let j=0;j<slen;j++) d[j]=(Math.random()*2-1)*Math.exp(-j/(slen*0.12));
+  const src=_ac.createBufferSource(); src.buffer=buf;
+  // 超低域のみ通す → 重いボンッ
+  const lp=_ac.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=200;
+  // ピッチ下がるオシレーター重ねる
+  const osc=_ac.createOscillator(); osc.type='sine';
+  osc.frequency.setValueAtTime(120,now); osc.frequency.exponentialRampToValueAtTime(30,now+0.5);
+  const go=_ac.createGain(); go.gain.setValueAtTime(0.7,now); go.gain.exponentialRampToValueAtTime(0.001,now+0.7);
+  const gn=_ac.createGain(); gn.gain.setValueAtTime(1.0,now); gn.gain.exponentialRampToValueAtTime(0.001,now+0.8);
+  src.connect(lp); lp.connect(gn); gn.connect(_ac.destination);
+  osc.connect(go); go.connect(_ac.destination);
+  src.start(now); osc.start(now); osc.stop(now+0.7);
+}
+
+function sndVictory(){
+  // エイエイオー ×3 — 勝鬨: 人声風のフォルマント合成
+  if(!_ac)return; _resume();
+  const now=_ac.currentTime;
+  // 「エイエイオー」1回を合成する関数
+  function chant(startT){
+    // エイ（ei）: 高め→オー（o）: 低め
+    const segments=[
+      {f:420, dur:0.22, vol:0.28},  // エ
+      {f:380, dur:0.18, vol:0.25},  // イ
+      {f:420, dur:0.22, vol:0.28},  // エ
+      {f:380, dur:0.18, vol:0.25},  // イ
+      {f:280, dur:0.55, vol:0.35},  // オー（長め）
+    ];
+    let t=startT;
+    for(const s of segments){
+      // 基音
+      const o1=_ac.createOscillator(); o1.type='sawtooth'; o1.frequency.value=s.f;
+      // フォルマント風バンドパス
+      const bp=_ac.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=s.f*2.2; bp.Q.value=3;
+      const g=_ac.createGain(); g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(s.vol,t+0.04); g.gain.linearRampToValueAtTime(0,t+s.dur);
+      o1.connect(bp); bp.connect(g); g.connect(_ac.destination);
+      o1.start(t); o1.stop(t+s.dur+0.05);
+      t+=s.dur;
+    }
+  }
+  // 3回繰り返す（間隔を少し開ける）
+  chant(now+0.1);
+  chant(now+1.5);
+  chant(now+2.9);
+}
+
 function doAtk(att, def, isRanged, isCharge){
   playAtkSound(att, isRanged, isCharge);
   const da=UDATA[att.type], dd=UDATA[def.type];
@@ -585,11 +638,11 @@ function doAtk(att, def, isRanged, isCharge){
   if(isCharge) tags.push('突撃');
   const tagStr=tags.length?`【${tags.join('・')}】`:'';
   log(`${att.cmd}→${def.cmd}: ${dmg}ダメージ${tagStr}`,'c');
-  if(def.hp<=0) log(`${def.cmd}の部隊、壊滅！`,'c');
+  if(def.hp<=0){ log(`${def.cmd}の部隊、壊滅！`,'c'); sndDestroy(); }
   if(isCharge){
     att.hp=Math.max(0,att.hp-8);
     log(`${att.cmd}は突撃の反動で8の損害`,'m');
-    if(att.hp<=0) log(`${att.cmd}の部隊、壊滅！`,'c');
+    if(att.hp<=0){ log(`${att.cmd}の部隊、壊滅！`,'c'); sndDestroy(); }
   }
   updateUDisp();
 }
@@ -816,6 +869,7 @@ function showOv(t,m){
   document.getElementById('ov-btn').style.display='inline-block';
   document.getElementById('army-pick').style.display='none';
   document.getElementById('overlay').style.display='flex';
+  sndVictory();
 }
 
 // ── 描画 ──
