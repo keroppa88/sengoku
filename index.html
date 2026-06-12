@@ -64,6 +64,7 @@ body { display: flex; font-family: 'MS Gothic', monospace; color: #e0d5c0; }
 </head>
 <body>
 <div id="canvas-wrap">
+  <audio id="bgm" src="music.m4a" loop preload="auto"></audio>
   <canvas id="c"></canvas>
   <div id="help">ドラッグ:移動 ｜ 右ドラッグ/Ctrl+ドラッグ:視点回転 ｜ ホイール:ズーム ｜ R:リセット ｜ クリック:選択</div>
   <div id="overlay">
@@ -869,6 +870,7 @@ function showOv(t,m){
   document.getElementById('ov-btn').style.display='inline-block';
   document.getElementById('army-pick').style.display='none';
   document.getElementById('overlay').style.display='flex';
+  bgmStop();
   sndVictory();
 }
 
@@ -1212,7 +1214,11 @@ function applyInertia(){
   cam.tz=Math.max(-mgn,Math.min(GH*TS+mgn,cam.tz));
 }
 
-document.addEventListener('pointerdown',_resume,{once:true});
+const _bgm=document.getElementById('bgm');
+_bgm.volume=0.7;
+function bgmStart(){ _bgm.play().catch(()=>{}); }
+function bgmStop(){ _bgm.pause(); _bgm.currentTime=0; }
+document.addEventListener('pointerdown',()=>{ _resume(); bgmStart(); },{once:true});
 document.getElementById('b-mv').addEventListener('click',()=>setAct('mv'));
 document.getElementById('b-rl').addEventListener('click',()=>rotate(-1));
 document.getElementById('b-rr').addEventListener('click',()=>rotate(1));
@@ -1240,6 +1246,7 @@ function startGame(armyKey){
   over=false; turnNum=1; phase='player'; sel=null; curAct=null;
   units=[]; hlTiles=[];
   genTerrain(); placeUnits(armyKey); resetCam();
+  bgmStart();
   log('--- 合戦開始！ ---','s');
   log(`${ARMIES[armyKey].name}として出陣！`,'s');
   log('部隊をクリックして指揮を執れ！','s');
