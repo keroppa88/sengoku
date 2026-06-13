@@ -85,6 +85,7 @@ body { display: flex; font-family: 'MS Gothic', monospace; color: #e0d5c0; }
 .cmd-chip:active { cursor:grabbing; }
 .cmd-chip.dragging { opacity:0.4; }
 .cmd-chip.in-slot { display:none; }
+.cmd-chip.fixed { cursor:default; border-color:#f0c040; color:#f0e0a0; }
 #assign-start {
   margin-top:16px; padding:10px 32px; background:#3a1a60; border:2px solid #8040c0;
   color:#e0c0ff; font-size:15px; cursor:pointer; font-family:inherit; border-radius:4px;
@@ -1322,24 +1323,35 @@ function buildAssignUI(army){
 
   let dragging=null; // {chip, fromSlot}
 
+  // strマップ: cmd→str（倍率表示用）
+  const strMap={};
+  army.roster.forEach(r=>strMap[r.cmd]=r.str);
+  // 本陣スロットインデックス
+  const honjinIdx=army.roster.findIndex(r=>r.t==='HONJIN');
+
   // 武将チップを生成
   const chips={};
   army.roster.forEach((r,i)=>{
     const chip=document.createElement('div');
-    chip.className='cmd-chip'; chip.textContent=r.cmd;
+    const isHonjin=(i===honjinIdx);
+    chip.className='cmd-chip'+(isHonjin?' fixed':'');
+    chip.innerHTML=`${r.cmd} <span style="color:#f0c040;font-size:11px">×${r.str}</span>`;
     chip.dataset.cmd=r.cmd; chip.dataset.idx=i;
-    chip.draggable=true;
-    chip.addEventListener('dragstart',e=>{
-      dragging={chip, slotIdx:parseInt(chip.dataset.slotIdx??'-1')};
-      chip.classList.add('dragging');
-      e.dataTransfer.effectAllowed='move';
-    });
-    chip.addEventListener('dragend',()=>chip.classList.remove('dragging'));
+    chip.draggable=!isHonjin;  // 本陣武将はドラッグ不可
+    if(!isHonjin){
+      chip.addEventListener('dragstart',e=>{
+        dragging={chip, slotIdx:parseInt(chip.dataset.slotIdx??'-1')};
+        chip.classList.add('dragging');
+        e.dataTransfer.effectAllowed='move';
+      });
+      chip.addEventListener('dragend',()=>chip.classList.remove('dragging'));
+    }
     chips[r.cmd]=chip;
   });
 
   // スロット（部隊）生成
   army.roster.forEach((r,i)=>{
+    const isHonjin=(i===honjinIdx);
     const row=document.createElement('div'); row.className='unit-slot';
     const lbl=document.createElement('div'); lbl.className='slot-type';
     lbl.textContent=UNIT_NAMES[r.t]||r.t;
@@ -1349,6 +1361,14 @@ function buildAssignUI(army){
     const chip=chips[_slotCmds[i]];
     chip.dataset.slotIdx=i;
     drop.textContent=''; drop.appendChild(chip);
+    if(isHonjin){
+      // 本陣はドロップ不可・固定表示
+      drop.style.borderStyle='solid'; drop.style.borderColor='#f0c040';
+      drop.style.cursor='default';
+      row.appendChild(lbl); row.appendChild(drop);
+      slotsEl.appendChild(row);
+      return;
+    }
 
     drop.addEventListener('dragover',e=>{e.preventDefault();drop.classList.add('drag-over');});
     drop.addEventListener('dragleave',()=>drop.classList.remove('drag-over'));
