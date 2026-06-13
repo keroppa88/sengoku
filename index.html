@@ -73,8 +73,8 @@ body { display: flex; font-family: 'MS Gothic', monospace; color: #e0d5c0; }
       <p id="ov-msg"></p>
       <button id="ov-btn">再戦する</button>
       <div id="army-pick" style="display:none">
-        <button class="army-btn" data-army="hideyoshi">羽柴秀吉軍で出陣<span class="rs">秀吉・池田恒興・黒田官兵衛・森長可・堀秀政・尾藤知宣・仙谷権兵衛</span></button>
-        <button class="army-btn" data-army="ieyasu">徳川家康軍で出陣<span class="rs">家康・石川数正・酒井忠次・本多忠勝・榊原康政・井伊直正・大久保忠世</span></button>
+        <button class="army-btn" data-army="hideyoshi">羽柴秀吉軍で出陣<span class="rs">秀吉・官兵衛・森長可・尾藤・堀・池田・仙谷・加藤清正</span></button>
+        <button class="army-btn" data-army="ieyasu">徳川家康軍で出陣<span class="rs">家康・井伊・本多忠勝・石川・榊原・酒井・大久保・鳥居元忠</span></button>
       </div>
     </div>
   </div>
@@ -140,23 +140,26 @@ const UDATA = {
 // 軍編成: 各武将は強さ倍率(str)を持ち、攻撃・防御・射撃に掛かる
 // dx: 前後（+が前線寄り）, dz: 左右
 const ARMIES = {
+  // 陣形: 本陣(最後方)→旗本→騎馬(側翼)→弓・鉄砲(中衛)→足軽×2(前衛)→烏合(前翼)
   hideyoshi: { name:'羽柴秀吉軍', roster:[
-    { cmd:'羽柴秀吉',   t:'HONJIN',   str:1.1, dx:-1, dz: 0 },
-    { cmd:'黒田官兵衛', t:'HATAMOTO', str:1.1, dx: 0, dz: 0 },
-    { cmd:'池田恒興',   t:'INFANTRY', str:1.0, dx: 2, dz:-2 },
-    { cmd:'堀秀政',     t:'RIFLE',    str:0.9, dx: 1, dz:-1 },
+    { cmd:'羽柴秀吉',   t:'HONJIN',   str:1.1, dx:-2, dz: 0 },
+    { cmd:'黒田官兵衛', t:'HATAMOTO', str:1.1, dx:-1, dz: 0 },
     { cmd:'森長可',     t:'CAVALRY',  str:1.0, dx: 1, dz:-3 },
-    { cmd:'仙谷権兵衛', t:'INFANTRY', str:0.8, dx: 2, dz: 2 },
-    { cmd:'尾藤知宣',   t:'BOW',      str:0.8, dx: 1, dz: 1 },
+    { cmd:'尾藤知宣',   t:'BOW',      str:0.8, dx: 0, dz:-1 },
+    { cmd:'堀秀政',     t:'RIFLE',    str:0.9, dx: 0, dz: 1 },
+    { cmd:'池田恒興',   t:'INFANTRY', str:1.0, dx: 2, dz:-1 },
+    { cmd:'仙谷権兵衛', t:'INFANTRY', str:0.8, dx: 2, dz: 1 },
+    { cmd:'加藤清正',   t:'RABBLE',   str:0.8, dx: 1, dz: 3 },
   ]},
   ieyasu: { name:'徳川家康軍', roster:[
-    { cmd:'徳川家康',   t:'HONJIN',   str:1.1, dx:-1, dz: 0 },
-    { cmd:'井伊直正',   t:'HATAMOTO', str:1.0, dx: 0, dz: 0 },
-    { cmd:'石川数正',   t:'INFANTRY', str:0.9, dx: 2, dz:-2 },
-    { cmd:'酒井忠次',   t:'INFANTRY', str:0.8, dx: 2, dz: 2 },
+    { cmd:'徳川家康',   t:'HONJIN',   str:1.1, dx:-2, dz: 0 },
+    { cmd:'井伊直正',   t:'HATAMOTO', str:1.0, dx:-1, dz: 0 },
     { cmd:'本多忠勝',   t:'CAVALRY',  str:1.1, dx: 1, dz:-3 },
-    { cmd:'榊原康政',   t:'RIFLE',    str:0.8, dx: 1, dz:-1 },
-    { cmd:'大久保忠世', t:'INFANTRY', str:1.0, dx: 2, dz: 0 },
+    { cmd:'石川数正',   t:'BOW',      str:0.9, dx: 0, dz:-1 },
+    { cmd:'榊原康政',   t:'RIFLE',    str:0.8, dx: 0, dz: 1 },
+    { cmd:'酒井忠次',   t:'INFANTRY', str:0.8, dx: 2, dz:-1 },
+    { cmd:'大久保忠世', t:'INFANTRY', str:1.0, dx: 2, dz: 1 },
+    { cmd:'鳥居元忠',   t:'RABBLE',   str:0.9, dx: 1, dz: 3 },
   ]},
 };
 const DNAMES = ['北','北東','東','南東','南','南西','西','北西'];
