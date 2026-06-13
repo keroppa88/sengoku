@@ -1046,10 +1046,10 @@ function pointInTotsu(px, py){
   return inside;
 }
 const TOTSU_DOTS=(()=>{
-  const pts=[]; const step=0.210;
-  for(let r=-1.05;r<=1.05;r+=step) for(let f=-0.7;f<=0.78;f+=step)
+  const pts=[]; const step=0.16;
+  for(let r=-1.0;r<=1.0+1e-9;r+=step) for(let f=-0.65;f<=0.72+1e-9;f+=step)
     if(pointInTotsu(r,f)) pts.push([r,f]);
-  return pts.slice(0,40); // 40粒 × 25人 = 1000人
+  return pts; // 小さい粒が集まって凸を形成
 })();
 
 function drawUnit(it){
@@ -1069,31 +1069,27 @@ function drawUnit(it){
   const fx=Math.sin(ang), fz=-Math.cos(ang);
   const rx=-fz, rz=fx;
 
-  // 兵数(=HP)に応じてスケールと粒数を決定
+  // 兵数(=HP)に応じて凸を縮小。粒は固定位置、外側の粒が消えて凸が小さくなる
   const ratio=u.hp/u.maxHp;
-  const SC=0.5+ratio*1.1;            // 最小0.5→最大1.6
-  const dotCount=Math.max(1, Math.ceil(u.hp/25));  // 1粒=25人
-  const dotR=Math.max(1.5, SC*3.5);  // 粒サイズ
+  const shrink=0.4+0.6*ratio;        // 凸の縮小率（HP満タンで1.0、瀕死で0.4）
+  const WORLD=1.05;                  // 凸のワールドスケール（固定）
   // 点滅判定
   const flash=u.flashUntil&&performance.now()<u.flashUntil&&Math.floor(performance.now()/250)%2===0;
 
-  // 粒を投影して描画
-  for(let i=0;i<dotCount;i++){
-    const [dr,df]=TOTSU_DOTS[i];
-    const px=wx+(rx*dr+fx*df)*SC, pz=wz+(rz*dr+fz*df)*SC;
-    const p=project(px, h+0.25, pz);
+  // 縮小後の凸に入る粒だけ描画（=外側から欠けて小さくなる）
+  for(const [dr,df] of TOTSU_DOTS){
+    if(!pointInTotsu(dr/shrink, df/shrink)) continue;
+    const px=wx+(rx*dr+fx*df)*WORLD, pz=wz+(rz*dr+fz*df)*WORLD;
+    const p=project(px, h+0.18, pz);
     if(!p) continue;
-    const r=Math.max(1, dotR*200/p.d);
-    // 影（立体感）
-    ctx.fillStyle='rgba(0,0,0,0.25)';
-    ctx.beginPath(); ctx.arc(p.x+r*0.3, p.y+r*0.4, r*0.85, 0, Math.PI*2); ctx.fill();
-    // 本体（点滅中は白）
-    ctx.fillStyle=flash?'#fff':shade(body, 0.8+0.4*(1-i/dotCount));
+    const r=Math.max(1.2, 330/p.d);  // 小さめの粒（固定サイズ感）
+    // 影（薄い立体感）
+    ctx.fillStyle='rgba(0,0,0,0.22)';
+    ctx.beginPath(); ctx.arc(p.x+r*0.25, p.y+r*0.35, r*0.9, 0, Math.PI*2); ctx.fill();
+    // 本体（前方ほど明るく＝奥行き感、点滅中は白）
+    ctx.fillStyle=flash?'#fff':shade(body, 0.78+0.32*((df+0.65)/1.37));
     ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI*2); ctx.fill();
-    if(sel2){
-      ctx.strokeStyle='rgba(255,255,120,0.7)'; ctx.lineWidth=0.6;
-      ctx.stroke();
-    }
+    if(sel2){ ctx.strokeStyle='rgba(255,255,120,0.6)'; ctx.lineWidth=0.5; ctx.stroke(); }
   }
 
   // HPバー
@@ -1109,12 +1105,15 @@ function drawUnit(it){
   }
 
   // 兵種記号（中心に）
-  const pc=project(wx, h+0.5, wz);
+  const pc=project(wx, h+0.35, wz);
   if(pc){
-    const fs=Math.max(6, 700/pc.d*SC);
-    ctx.fillStyle='rgba(255,255,255,0.9)';
+    const fs=Math.max(7, 720/pc.d*(0.6+0.4*ratio));
+    ctx.lineWidth=Math.max(2, fs*0.18);
+    ctx.strokeStyle='rgba(0,0,0,0.85)';
+    ctx.fillStyle='rgba(255,255,255,0.97)';
     ctx.font=`bold ${fs|0}px sans-serif`;
     ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.strokeText(UDATA[u.type].sym, pc.x, pc.y);
     ctx.fillText(UDATA[u.type].sym, pc.x, pc.y);
   }
 }
