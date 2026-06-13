@@ -1088,7 +1088,9 @@ function drawUnit(it){
     const px=wx+(rx*dr+fx*df)*WORLD, pz=wz+(rz*dr+fz*df)*WORLD;
     const p=project(px, h+0.18, pz);
     if(!p) continue;
-    const r=Math.max(0.8, 150/p.d);  // 小さな粒（重ならない）
+    // 粒の間隔は画面上で約 (step*WORLD*fov)/p.d ≈ 75/p.d px。
+    // 半径はその約3割に固定して、どのズームでも重ならない。
+    const r=Math.max(0.5, 24/p.d);
     // 粒ごとに微妙な明暗で人の頭らしく
     const tone=0.7+0.45*((df+0.65)/1.37) + ((di*0.37)%0.2-0.1);
     ctx.fillStyle=flash?'#fff':shade(body, tone);
