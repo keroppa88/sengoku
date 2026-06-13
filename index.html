@@ -44,9 +44,9 @@ body { display: flex; font-family: 'MS Gothic', monospace; color: #e0d5c0; }
   position:absolute; inset:0; background:rgba(0,0,0,.8);
   display:none; align-items:center; justify-content:center; z-index:50;
 }
-#ovbox { background:#100c1e; border:2px solid #7a6340; padding:36px; text-align:center; min-width:280px; }
+#ovbox { background:#100c1e; border:2px solid #7a6340; padding:28px 36px; text-align:center; min-width:320px; }
 #ovbox h1 { font-size:24px; color:#f0c040; margin-bottom:12px; }
-#ovbox p { color:#a09070; font-size:12px; margin-bottom:20px; line-height:1.6; }
+#ovbox p { color:#a09070; font-size:13px; margin-bottom:20px; line-height:1.6; }
 #ov-btn {
   padding:10px 28px; background:#3a1a60; border:2px solid #8040c0;
   color:#e0c0ff; font-size:14px; cursor:pointer; font-family:inherit;
@@ -55,10 +55,41 @@ body { display: flex; font-family: 'MS Gothic', monospace; color: #e0d5c0; }
 .army-btn {
   display:block; width:100%; padding:12px 28px; margin:8px 0;
   background:#3a1a60; border:2px solid #8040c0;
-  color:#e0c0ff; font-size:14px; cursor:pointer; font-family:inherit;
+  color:#e0c0ff; font-size:16px; cursor:pointer; font-family:inherit;
 }
 .army-btn:hover { background:#4a2a70; }
-.army-btn .rs { display:block; font-size:10px; color:#a080c0; margin-top:4px; }
+/* 武将割り当て画面 */
+#assign-screen { display:none; }
+#assign-screen h2 { color:#f0c040; font-size:18px; margin-bottom:14px; }
+#assign-layout { display:flex; gap:24px; align-items:flex-start; justify-content:center; }
+#unit-slots { display:flex; flex-direction:column; gap:6px; }
+.unit-slot {
+  display:flex; align-items:center; gap:10px;
+  background:#1a1230; border:1px solid #4a3a5a; padding:6px 10px; border-radius:4px;
+}
+.slot-type { color:#c0a060; font-size:14px; width:60px; text-align:right; }
+.slot-drop {
+  width:110px; height:32px; border:2px dashed #5a4a7a; border-radius:4px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:13px; color:#908070; background:#120e20; transition:background .15s;
+}
+.slot-drop.drag-over { background:#2a1a5a; border-color:#a070ff; }
+.slot-drop.filled { border-style:solid; border-color:#7a5a9a; color:#e0d0ff; background:#1e1438; }
+#cmd-pool { display:flex; flex-direction:column; gap:6px; min-width:110px; }
+#cmd-pool h3 { color:#a09080; font-size:12px; margin-bottom:4px; }
+.cmd-chip {
+  padding:6px 10px; background:#2a1e42; border:1px solid #6a4a8a;
+  color:#d0c0f0; font-size:13px; border-radius:4px;
+  cursor:grab; user-select:none; text-align:center;
+}
+.cmd-chip:active { cursor:grabbing; }
+.cmd-chip.dragging { opacity:0.4; }
+.cmd-chip.in-slot { display:none; }
+#assign-start {
+  margin-top:16px; padding:10px 32px; background:#3a1a60; border:2px solid #8040c0;
+  color:#e0c0ff; font-size:15px; cursor:pointer; font-family:inherit; border-radius:4px;
+}
+#assign-start:hover { background:#4a2a70; }
 #help { position:absolute; bottom:6px; left:6px; font-size:9px; color:#605040; pointer-events:none; text-shadow:0 1px 2px #000; }
 </style>
 </head>
@@ -73,8 +104,16 @@ body { display: flex; font-family: 'MS Gothic', monospace; color: #e0d5c0; }
       <p id="ov-msg"></p>
       <button id="ov-btn">再戦する</button>
       <div id="army-pick" style="display:none">
-        <button class="army-btn" data-army="hideyoshi">羽柴秀吉軍で出陣<span class="rs">秀吉・官兵衛・森長可・尾藤・堀・池田・仙谷・加藤清正</span></button>
-        <button class="army-btn" data-army="ieyasu">徳川家康軍で出陣<span class="rs">家康・井伊・本多忠勝・石川・榊原・酒井・大久保・鳥居元忠</span></button>
+        <button class="army-btn" data-army="hideyoshi">⚔ 羽柴秀吉軍</button>
+        <button class="army-btn" data-army="ieyasu">⚔ 徳川家康軍</button>
+      </div>
+      <div id="assign-screen">
+        <h2 id="assign-title"></h2>
+        <div id="assign-layout">
+          <div id="unit-slots"></div>
+          <div id="cmd-pool"><h3>武将</h3></div>
+        </div>
+        <button id="assign-start">出　陣</button>
       </div>
     </div>
   </div>
@@ -1241,9 +1280,11 @@ document.getElementById('b-df').addEventListener('click',()=>setAct('df'));
 document.getElementById('end-btn').addEventListener('click',endTurn);
 document.getElementById('ov-btn').addEventListener('click', showArmySelect);
 document.querySelectorAll('.army-btn').forEach(b=>b.addEventListener('click',()=>{
-  document.getElementById('overlay').style.display='none';
-  startGame(b.dataset.army);
+  showAssignScreen(b.dataset.army);
 }));
+document.getElementById('assign-start').addEventListener('click',()=>{
+  commitAssignment();
+});
 
 // ── 起動 ──
 function showArmySelect(){
@@ -1251,7 +1292,117 @@ function showArmySelect(){
   document.getElementById('ov-msg').textContent='どちらの軍で出陣する？';
   document.getElementById('ov-btn').style.display='none';
   document.getElementById('army-pick').style.display='block';
+  document.getElementById('assign-screen').style.display='none';
   document.getElementById('overlay').style.display='flex';
+}
+
+let _assignArmy=null, _slotCmds=[];
+
+function showAssignScreen(armyKey){
+  _assignArmy=armyKey;
+  const army=ARMIES[armyKey];
+  // _slotCmds: インデックス対応で武将名を保持
+  _slotCmds=army.roster.map(r=>r.cmd);
+
+  document.getElementById('assign-title').textContent=army.name+' — 武将配置';
+  document.getElementById('ov-msg').textContent='';
+  document.getElementById('ov-btn').style.display='none';
+  document.getElementById('army-pick').style.display='none';
+  document.getElementById('assign-screen').style.display='block';
+
+  buildAssignUI(army);
+}
+
+const UNIT_NAMES={HONJIN:'本陣',HATAMOTO:'旗本',CAVALRY:'騎馬',BOW:'弓足軽',RIFLE:'鉄砲',INFANTRY:'足軽',RABBLE:'烏合衆'};
+
+function buildAssignUI(army){
+  const slotsEl=document.getElementById('unit-slots');
+  const poolEl=document.getElementById('cmd-pool');
+  slotsEl.innerHTML=''; poolEl.innerHTML='<h3>武将</h3>';
+
+  let dragging=null; // {chip, fromSlot}
+
+  // 武将チップを生成
+  const chips={};
+  army.roster.forEach((r,i)=>{
+    const chip=document.createElement('div');
+    chip.className='cmd-chip'; chip.textContent=r.cmd;
+    chip.dataset.cmd=r.cmd; chip.dataset.idx=i;
+    chip.draggable=true;
+    chip.addEventListener('dragstart',e=>{
+      dragging={chip, slotIdx:parseInt(chip.dataset.slotIdx??'-1')};
+      chip.classList.add('dragging');
+      e.dataTransfer.effectAllowed='move';
+    });
+    chip.addEventListener('dragend',()=>chip.classList.remove('dragging'));
+    chips[r.cmd]=chip;
+  });
+
+  // スロット（部隊）生成
+  army.roster.forEach((r,i)=>{
+    const row=document.createElement('div'); row.className='unit-slot';
+    const lbl=document.createElement('div'); lbl.className='slot-type';
+    lbl.textContent=UNIT_NAMES[r.t]||r.t;
+    const drop=document.createElement('div');
+    drop.className='slot-drop filled'; drop.dataset.slotIdx=i;
+    // デフォルト配置
+    const chip=chips[_slotCmds[i]];
+    chip.dataset.slotIdx=i;
+    drop.textContent=''; drop.appendChild(chip);
+
+    drop.addEventListener('dragover',e=>{e.preventDefault();drop.classList.add('drag-over');});
+    drop.addEventListener('dragleave',()=>drop.classList.remove('drag-over'));
+    drop.addEventListener('drop',e=>{
+      e.preventDefault(); drop.classList.remove('drag-over');
+      if(!dragging) return;
+      const toIdx=parseInt(drop.dataset.slotIdx);
+      const fromIdx=dragging.slotIdx;
+      const fromChip=dragging.chip;
+      // スロット内のチップを取得
+      const existingChip=drop.querySelector('.cmd-chip');
+      // 入れ替え or プール→スロット
+      if(existingChip && existingChip!==fromChip){
+        // 既存チップをfromの場所へ返す
+        if(fromIdx>=0){
+          const fromDrop=slotsEl.children[fromIdx]?.querySelector('.slot-drop');
+          if(fromDrop){fromDrop.innerHTML='';fromDrop.appendChild(existingChip);existingChip.dataset.slotIdx=fromIdx;_slotCmds[fromIdx]=existingChip.dataset.cmd;}
+        } else {
+          // プールに戻す
+          existingChip.dataset.slotIdx=-1; poolEl.appendChild(existingChip);
+        }
+      }
+      drop.innerHTML=''; drop.appendChild(fromChip);
+      fromChip.dataset.slotIdx=toIdx; _slotCmds[toIdx]=fromChip.dataset.cmd;
+      dragging=null;
+    });
+    row.appendChild(lbl); row.appendChild(drop);
+    slotsEl.appendChild(row);
+  });
+
+  // プールにはまだスロット未割当の武将（初期は全員スロット済み）
+  // プール自体へのdrop対応
+  poolEl.addEventListener('dragover',e=>{e.preventDefault();});
+  poolEl.addEventListener('drop',e=>{
+    e.preventDefault(); if(!dragging) return;
+    const fromIdx=dragging.slotIdx;
+    const fromChip=dragging.chip;
+    if(fromIdx>=0){
+      const fromDrop=slotsEl.children[fromIdx]?.querySelector('.slot-drop');
+      if(fromDrop){fromDrop.innerHTML=''; _slotCmds[fromIdx]=null;}
+    }
+    fromChip.dataset.slotIdx=-1; poolEl.appendChild(fromChip);
+    dragging=null;
+  });
+}
+
+function commitAssignment(){
+  // _slotCmdsに基づいてARM​IES[armyKey].rosterのcmdを書き換え
+  const army=ARMIES[_assignArmy];
+  _slotCmds.forEach((cmd,i)=>{
+    if(cmd) army.roster[i].cmd=cmd;
+  });
+  document.getElementById('overlay').style.display='none';
+  startGame(_assignArmy);
 }
 
 function startGame(armyKey){
