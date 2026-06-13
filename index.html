@@ -1046,10 +1046,14 @@ function pointInTotsu(px, py){
   return inside;
 }
 const TOTSU_DOTS=(()=>{
-  const pts=[]; const step=0.16;
+  const pts=[]; const step=0.12;
+  // 決定的な擬似乱数でわずかに散らす（人混みのように格子っぽさを消す）
+  let seed=12345;
+  const rnd=()=>{ seed=(seed*9301+49297)%233280; return seed/233280; };
   for(let r=-1.0;r<=1.0+1e-9;r+=step) for(let f=-0.65;f<=0.72+1e-9;f+=step)
-    if(pointInTotsu(r,f)) pts.push([r,f]);
-  return pts; // 小さい粒が集まって凸を形成
+    if(pointInTotsu(r,f))
+      pts.push([ r+(rnd()-0.5)*step*0.7, f+(rnd()-0.5)*step*0.7 ]);
+  return pts; // 小さい粒が集まって凸を形成（上空から見た人混み）
 })();
 
 function drawUnit(it){
@@ -1077,19 +1081,26 @@ function drawUnit(it){
   const flash=u.flashUntil&&performance.now()<u.flashUntil&&Math.floor(performance.now()/250)%2===0;
 
   // 縮小後の凸に入る粒だけ描画（=外側から欠けて小さくなる）
+  // 粒は小さく間隔をあけ、重ならない＝上空から見た人混み
+  let di=0;
   for(const [dr,df] of TOTSU_DOTS){
     if(!pointInTotsu(dr/shrink, df/shrink)) continue;
     const px=wx+(rx*dr+fx*df)*WORLD, pz=wz+(rz*dr+fz*df)*WORLD;
     const p=project(px, h+0.18, pz);
     if(!p) continue;
-    const r=Math.max(1.2, 330/p.d);  // 小さめの粒（固定サイズ感）
-    // 影（薄い立体感）
-    ctx.fillStyle='rgba(0,0,0,0.22)';
-    ctx.beginPath(); ctx.arc(p.x+r*0.25, p.y+r*0.35, r*0.9, 0, Math.PI*2); ctx.fill();
-    // 本体（前方ほど明るく＝奥行き感、点滅中は白）
-    ctx.fillStyle=flash?'#fff':shade(body, 0.78+0.32*((df+0.65)/1.37));
+    const r=Math.max(0.8, 150/p.d);  // 小さな粒（重ならない）
+    // 粒ごとに微妙な明暗で人の頭らしく
+    const tone=0.7+0.45*((df+0.65)/1.37) + ((di*0.37)%0.2-0.1);
+    ctx.fillStyle=flash?'#fff':shade(body, tone);
     ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI*2); ctx.fill();
-    if(sel2){ ctx.strokeStyle='rgba(255,255,120,0.6)'; ctx.lineWidth=0.5; ctx.stroke(); }
+    di++;
+  }
+  if(sel2){
+    // 選択時は薄い輪郭で囲う（凸の範囲を示す）
+    const oc=project(wx, h+0.18, wz);
+    if(oc){ const rr=Math.max(8, 1400/oc.d*shrink);
+      ctx.strokeStyle='rgba(255,255,120,0.55)'; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.arc(oc.x, oc.y, rr, 0, Math.PI*2); ctx.stroke(); }
   }
 
   // HPバー
