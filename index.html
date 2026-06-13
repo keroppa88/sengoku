@@ -1416,7 +1416,7 @@ function buildAssignUI(army){
 }
 
 function commitAssignment(){
-  // _slotCmdsに基づいてARM​IES[armyKey].rosterのcmdを書き換え
+  // _slotCmdsに基づいてARMIES[armyKey].rosterのcmdを書き換え
   const army=ARMIES[_assignArmy];
   _slotCmds.forEach((cmd,i)=>{
     if(cmd) army.roster[i].cmd=cmd;
