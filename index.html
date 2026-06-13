@@ -174,7 +174,7 @@ const UDATA = {
   RIFLE:    {name:'鉄砲足軽',sym:'銃', hp:1000, atk:5,  def:7,  mv:8,  sh:25, sr:4 },
   BOW:      {name:'弓足軽', sym:'弓', hp:1000, atk:5,  def:7,  mv:8,  sh:15, sr:4 },
   INFANTRY: {name:'足軽',   sym:'足', hp:1000, atk:8,  def:8,  mv:8,  sh:0,  sr:0 },
-  RABBLE:   {name:'烏合衆', sym:'衆', hp:1000, atk:5,  def:5,  mv:6,  sh:0,  sr:0 },
+  RABBLE:   {name:'烏合衆', sym:'烏合', hp:1000, atk:5,  def:5,  mv:6,  sh:0,  sr:0 },
 };
 
 // 軍編成: 各武将は強さ倍率(str)を持ち、攻撃・防御・射撃に掛かる
@@ -434,13 +434,14 @@ function mcost(x,z){
   if(x<0||z<0||x>=GW||z>=GH) return 99;
   return TDATA[terrain[z][x]].mc;
 }
-function reachable(u){
-  const r=mvRange(u), best={}, q=[{x:u.gx,z:u.gz,c:0}], res=[];
+// 各到達マスへの最小コストマップを返す（"x,z"→cost）。budget未指定ならmvRange
+function reachCost(u, budget){
+  const r=(budget==null?mvRange(u):budget), best={}, q=[{x:u.gx,z:u.gz,c:0}];
   const dirs=[[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[1,-1],[-1,1],[1,1]];
   best[u.gx+','+u.gz]=0;
   while(q.length){
     const cur=q.shift();
-    if(cur.c>best[cur.x+','+cur.z]) continue; // stale entry
+    if(cur.c>best[cur.x+','+cur.z]) continue;
     if(cur.c>=r) continue;
     for(let i=0;i<8;i++){
       const nx=cur.x+dirs[i][0],nz=cur.z+dirs[i][1];
@@ -449,17 +450,23 @@ function reachable(u){
       const diag=(dirs[i][0]!==0&&dirs[i][1]!==0)?1.4:1.0;
       const c=cur.c+mcost(nx,nz)*diag+(dh>0?dh*1.5:0);
       const k=nx+','+nz;
+      // 占有マスは通過は可だが停止不可（後でフィルタ）
       if(c<=r&&(best[k]===undefined||best[k]>c)){
         best[k]=c;
         q.push({x:nx,z:nz,c});
-        if(!occupied(nx,nz)) res.push({x:nx,z:nz});
       }
     }
   }
-  // deduplicate res (keep best-cost entry per tile)
-  const seen=new Set(), dedup=[];
-  for(const t of res){const k=t.x+','+t.z;if(!seen.has(k)){seen.add(k);dedup.push(t);}}
-  return dedup;
+  delete best[u.gx+','+u.gz]; // 起点は除く
+  // 占有マスは停止先にできないので除外
+  const out={};
+  for(const k in best){ const [x,z]=k.split(',').map(Number); if(!occupied(x,z)) out[k]=best[k]; }
+  return out;
+}
+function reachable(u, budget){
+  const best=reachCost(u, budget), res=[];
+  for(const k in best){ const [x,z]=k.split(',').map(Number); res.push({x,z}); }
+  return res;
 }
 function mdist(a,b){return Math.max(Math.abs(a.gx-b.gx),Math.abs(a.gz-b.gz));}
 function atkTargets(u){
@@ -703,16 +710,32 @@ function moveAtkTargets(u, tiles){
   });
 }
 
+// 残り移動力（移動力 − 既に使った分）
+function spareMv(u){ return mvRange(u) - (u.movedCost||0); }
+
 function setAct(a){
   if(!sel||sel.acted||phase!=='player') return;
   curAct=a; hlTiles=[];
+  const spare=spareMv(sel);
   if(a==='mv'){
-    const tiles=reachable(sel);
-    tiles.forEach(t=>hlTiles.push({gx:t.x,gz:t.z,t:'mv'}));
-    // 移動範囲に隣接する敵 = 移動攻撃可能
-    moveAtkTargets(sel,tiles).forEach(o=>hlTiles.push({gx:o.gx,gz:o.gz,t:'at'}));
+    if(spare>0){
+      const tiles=reachable(sel, spare);
+      tiles.forEach(t=>hlTiles.push({gx:t.x,gz:t.z,t:'mv'}));
+      // 移動して隣接できる敵（残量があれば移動即攻撃）
+      moveAtkTargets(sel,tiles).forEach(o=>hlTiles.push({gx:o.gx,gz:o.gz,t:'at'}));
+    } else {
+      // 移動力ゼロでも隣接敵がいれば攻撃可（移動せず）
+      atkTargets(sel).forEach(o=>hlTiles.push({gx:o.gx,gz:o.gz,t:'at'}));
+    }
   }
-  else if(a==='at'||a==='ch') atkTargets(sel).forEach(u=>hlTiles.push({gx:u.gx,gz:u.gz,t:'at'}));
+  else if(a==='at'||a==='ch'){
+    if(spare>=1){
+      const tiles=reachable(sel, spare);
+      moveAtkTargets(sel,tiles).forEach(o=>hlTiles.push({gx:o.gx,gz:o.gz,t:'at'}));
+    } else {
+      atkTargets(sel).forEach(o=>hlTiles.push({gx:o.gx,gz:o.gz,t:'at'}));
+    }
+  }
   else if(a==='sh') shootTargets(sel).forEach(u=>hlTiles.push({gx:u.gx,gz:u.gz,t:'sh'}));
   else if(a==='df'){
     sel.defending=true;sel.acted=true;
@@ -721,43 +744,65 @@ function setAct(a){
   updUI();
 }
 
+// 標的の方を向いて攻撃（移動攻撃 or その場攻撃）。攻撃後は行動終了
+function faceAndAttack(cu, isCharge){
+  sel.facing=Math.round((Math.atan2(cu.gx-sel.gx,-(cu.gz-sel.gz))/(Math.PI*2)*8)+8)%8;
+  doAtk(sel,cu,false,isCharge);
+  sel.acted=true; curAct=null; hlTiles=[];
+}
+
+// 敵への移動攻撃: 隣接なら即攻撃、離れていれば最安経路で隣接へ移動し、
+// 移動力に余りがあれば攻撃する
+function moveAttackEnemy(cu, isCharge){
+  // すでに隣接
+  if(mdist(sel,cu)<=1){
+    if(spareMv(sel)>=1){ faceAndAttack(cu,isCharge); chkVic(); }
+    return;
+  }
+  // 残量内で敵に隣接できる最安マスを探す
+  const cm=reachCost(sel, spareMv(sel));
+  let best=null, bc=Infinity;
+  for(const k in cm){
+    const [x,z]=k.split(',').map(Number);
+    if(Math.max(Math.abs(x-cu.gx),Math.abs(z-cu.gz))===1 && cm[k]<bc){ bc=cm[k]; best={x,z}; }
+  }
+  if(!best) return;  // 届かない
+  sel.gx=best.x; sel.gz=best.z; sel.movedCost=(sel.movedCost||0)+bc;
+  if(spareMv(sel)>=1){
+    log(`${sel.cmd}が移動して攻撃`,'m');
+    faceAndAttack(cu,isCharge); chkVic();
+  } else {
+    // ちょうど移動力を使い切った → 攻撃する余力なし
+    log(`${sel.cmd}が前進（攻撃する余力なし）`,'m');
+    sel.acted=true; curAct=null; hlTiles=[];
+  }
+}
+
 function tileClick(gx,gz){
   if(phase!=='player'||over) return;
   const cu=units.find(u=>u.hp>0&&u.gx===gx&&u.gz===gz);
-  if(curAct==='mv'&&sel){
+  if(curAct==='mv'&&sel&&!sel.acted){
+    // 移動先マス
     if(hlTiles.some(h=>h.gx===gx&&h.gz===gz&&h.t==='mv')){
-      sel.gx=gx;sel.gz=gz;sel.acted=true;
+      const cm=reachCost(sel, spareMv(sel));
+      const c=cm[gx+','+gz]; if(c==null) return;
+      sel.gx=gx; sel.gz=gz; sel.movedCost=(sel.movedCost||0)+c;
       log(`${sel.cmd}が移動`,'m');
       chkVic();
-      curAct=null;hlTiles=[];updUI();return;
+      // 残量があれば移動継続/隣接攻撃可、なければ行動終了
+      if(!over && spareMv(sel)>0 && !sel.acted){ setAct('mv'); }
+      else { sel.acted=true; curAct=null; hlTiles=[]; updUI(); }
+      return;
     }
-    // 敵ユニットに被せてクリック → 移動攻撃
+    // 敵に被せてクリック → 移動攻撃
     if(cu&&cu.side!==sel.side&&hlTiles.some(h=>h.gx===gx&&h.gz===gz&&h.t==='at')){
-      // 敵に隣接する移動可能マスのうち、現在地から最も近い場所へ移動
-      if(Math.max(Math.abs(sel.gx-gx),Math.abs(sel.gz-gz))>1){
-        const tiles=reachable(sel);
-        let best=null,bd=Infinity;
-        for(const t of tiles){
-          if(Math.max(Math.abs(t.x-gx),Math.abs(t.z-gz))!==1) continue;
-          const d=Math.max(Math.abs(t.x-sel.gx),Math.abs(t.z-sel.gz));
-          if(d<bd){bd=d;best=t;}
-        }
-        if(!best) return;
-        sel.gx=best.x; sel.gz=best.z;
-        log(`${sel.cmd}が突撃移動`,'m');
-      }
-      // 標的の方を向いて攻撃
-      sel.facing=Math.round((Math.atan2(gx-sel.gx,-(gz-sel.gz))/(Math.PI*2)*8)+8)%8;
-      doAtk(sel,cu);
-      sel.acted=true;curAct=null;hlTiles=[];
-      chkVic();updUI();return;
+      moveAttackEnemy(cu,false); updUI(); return;
     }
-  } else if((curAct==='at'||curAct==='ch')&&sel){
-    if(cu&&cu.side!==sel.side&&atkTargets(sel).includes(cu)){
-      doAtk(sel,cu,false,curAct==='ch');sel.acted=true;curAct=null;hlTiles=[];
-      chkVic();updUI();return;
+  } else if((curAct==='at'||curAct==='ch')&&sel&&!sel.acted){
+    if(cu&&cu.side!==sel.side&&hlTiles.some(h=>h.gx===gx&&h.gz===gz&&h.t==='at')){
+      moveAttackEnemy(cu, curAct==='ch'); updUI(); return;
     }
-  } else if(curAct==='sh'&&sel){
+  } else if(curAct==='sh'&&sel&&!sel.acted){
     if(cu&&cu.side!==sel.side&&shootTargets(sel).includes(cu)){
       doAtk(sel,cu,true);sel.acted=true;curAct=null;hlTiles=[];
       chkVic();updUI();return;
@@ -765,16 +810,17 @@ function tileClick(gx,gz){
   }
   if(cu&&cu.side==='player'&&cu.hp>0){
     sel=cu;curAct=null;hlTiles=[];
-    // 選択と同時に移動範囲を表示（未行動なら）
     if(!cu.acted) setAct('mv');
     else updUI();
   }
 }
 
 function rotate(d){
-  if(!sel||phase!=='player'||over) return;
+  if(!sel||phase!=='player'||over||sel.acted) return;
   sel.facing=(sel.facing+d+8)%8;
-  log(`${sel.cmd}が${DNAMES[sel.facing]}を向いた`,'m');updUI();
+  log(`${sel.cmd}が${DNAMES[sel.facing]}へ向き直り、態勢を整えた`,'m');
+  sel.acted=true; curAct=null; hlTiles=[];  // 方向転換で行動終了
+  updUI();
 }
 
 // ── 敵AI ──
@@ -820,7 +866,7 @@ function enemyTurn(){
 function endEnemyTurn(){
   log('--- あなたの番 ---','s');
   turnNum++;phase='player';
-  units.forEach(u=>{u.acted=false;u.defending=false;});
+  units.forEach(u=>{u.acted=false;u.defending=false;u.movedCost=0;});
   sel=null;hlTiles=[];updUI();
 }
 
@@ -898,9 +944,11 @@ function updBtns(){
   const ip=phase==='player', hu=sel&&sel.hp>0&&sel.side==='player';
   const ca=hu&&!sel.acted&&ip;
   const hs=hu&&UDATA[sel.type].sr>0;
-  document.getElementById('b-mv').disabled=!ca;
-  document.getElementById('b-rl').disabled=!hu||!ip;
-  document.getElementById('b-rr').disabled=!hu||!ip;
+  // 移動: 残量があれば
+  const canMove=ca&&spareMv(sel)>0;
+  document.getElementById('b-mv').disabled=!canMove;
+  document.getElementById('b-rl').disabled=!ca;  // 方向転換は行動終了扱い
+  document.getElementById('b-rr').disabled=!ca;
   document.getElementById('b-at').disabled=!ca;
   document.getElementById('b-ch').disabled=!ca||sel.type!=='CAVALRY';
   document.getElementById('b-sh').disabled=!ca||!hs;
