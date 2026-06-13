@@ -169,8 +169,8 @@ const TDATA = {
 const UDATA = {
   // HP統一: 全ユニット50
   HONJIN:   {name:'本陣',   sym:'本', hp:1000, atk:10, def:12, mv:8,  sh:12, sr:4 },
-  HATAMOTO: {name:'旗本',   sym:'旗', hp:1000, atk:12, def:12, mv:12, sh:12, sr:4 },
-  CAVALRY:  {name:'騎馬',   sym:'馬', hp:1000, atk:15, def:12, mv:20, sh:0,  sr:0 },
+  HATAMOTO: {name:'旗本',   sym:'旗', hp:1000, atk:12, def:12, mv:10, sh:12, sr:4 },
+  CAVALRY:  {name:'騎馬',   sym:'馬', hp:1000, atk:15, def:12, mv:15, sh:0,  sr:0 },
   RIFLE:    {name:'鉄砲足軽',sym:'銃', hp:1000, atk:5,  def:7,  mv:8,  sh:25, sr:4 },
   BOW:      {name:'弓足軽', sym:'弓', hp:1000, atk:5,  def:7,  mv:8,  sh:15, sr:4 },
   INFANTRY: {name:'足軽',   sym:'足', hp:1000, atk:8,  def:8,  mv:8,  sh:0,  sr:0 },
@@ -423,16 +423,30 @@ function placeUnits(playerArmy){
 }
 
 // ── 経路・範囲 ──
+// ユニット種別×地形の移動コスト
+function terrainMC(type, tkey){
+  // 騎馬: 平野/田/丘=1, 森/湿地/川=6
+  // 旗本: 平野/田/丘=1, 森/湿地/川=3
+  // その他(足軽系/本陣/烏合): 平野/田/丘=1, 森/湿地/川=2 (但し川湿地=2)
+  if(tkey==='PLAIN'||tkey==='RICE') return 1;
+  if(tkey==='HILL') return 1;
+  if(tkey==='FOREST'||tkey==='SWAMP'||tkey==='RIVER'){
+    if(type==='CAVALRY') return 6;
+    if(type==='HATAMOTO') return 3;
+    return 2; // 足軽/弓/鉄砲/本陣/烏合
+  }
+  return 1;
+}
 function mvRange(u){
-  let r=UDATA[u.type].mv/2;  // 移動力は半減して適用
-  if(u.hp < 300) r=Math.max(1,r-1); // 300人未満で移動力低下
+  let r=UDATA[u.type].mv;
+  if(u.hp < 300) r=Math.max(1,r-1);
   if(u.morale<40) r=Math.max(1,r-1);
   return r;
 }
 function occupied(x,z){return units.some(u=>u.hp>0&&u.gx===x&&u.gz===z);}
-function mcost(x,z){
+function mcost(type,x,z){
   if(x<0||z<0||x>=GW||z>=GH) return 99;
-  return TDATA[terrain[z][x]].mc;
+  return terrainMC(type, terrain[z][x]);
 }
 // 各到達マスへの最小コストマップを返す（"x,z"→cost）。budget未指定ならmvRange
 function reachCost(u, budget){
@@ -448,7 +462,7 @@ function reachCost(u, budget){
       if(nx<0||nz<0||nx>=GW||nz>=GH) continue;
       const dh=hmap[nz][nx]-hmap[cur.z][cur.x];
       const diag=(dirs[i][0]!==0&&dirs[i][1]!==0)?1.4:1.0;
-      const c=cur.c+mcost(nx,nz)*diag+(dh>0?dh*1.5:0);
+      const c=cur.c+mcost(u.type,nx,nz)*diag+(dh>0?dh*1.5:0);
       const k=nx+','+nz;
       // 占有マスは通過は可だが停止不可（後でフィルタ）
       if(c<=r&&(best[k]===undefined||best[k]>c)){
