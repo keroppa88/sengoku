@@ -128,13 +128,13 @@ const TDATA = {
 // mv=移動力, atk=攻撃力, def=防御力, sh=射撃力, sr=射程
 const UDATA = {
   // HP統一: 全ユニット50
-  HONJIN:   {name:'本陣',   sym:'本', hp:50, atk:10, def:12, mv:8,  sh:12, sr:4 },
-  HATAMOTO: {name:'旗本',   sym:'旗', hp:50, atk:12, def:12, mv:12, sh:12, sr:4 },
-  CAVALRY:  {name:'騎馬',   sym:'馬', hp:50, atk:15, def:12, mv:20, sh:0,  sr:0 },
-  RIFLE:    {name:'鉄砲足軽',sym:'銃', hp:50, atk:5,  def:7,  mv:8,  sh:25, sr:4 },
-  BOW:      {name:'弓足軽', sym:'弓', hp:50, atk:5,  def:7,  mv:8,  sh:15, sr:4 },
-  INFANTRY: {name:'足軽',   sym:'足', hp:50, atk:8,  def:8,  mv:8,  sh:0,  sr:0 },
-  RABBLE:   {name:'烏合衆', sym:'衆', hp:50, atk:5,  def:5,  mv:6,  sh:0,  sr:0 },
+  HONJIN:   {name:'本陣',   sym:'本', hp:1000, atk:10, def:12, mv:8,  sh:12, sr:4 },
+  HATAMOTO: {name:'旗本',   sym:'旗', hp:1000, atk:12, def:12, mv:12, sh:12, sr:4 },
+  CAVALRY:  {name:'騎馬',   sym:'馬', hp:1000, atk:15, def:12, mv:20, sh:0,  sr:0 },
+  RIFLE:    {name:'鉄砲足軽',sym:'銃', hp:1000, atk:5,  def:7,  mv:8,  sh:25, sr:4 },
+  BOW:      {name:'弓足軽', sym:'弓', hp:1000, atk:5,  def:7,  mv:8,  sh:15, sr:4 },
+  INFANTRY: {name:'足軽',   sym:'足', hp:1000, atk:8,  def:8,  mv:8,  sh:0,  sr:0 },
+  RABBLE:   {name:'烏合衆', sym:'衆', hp:1000, atk:5,  def:5,  mv:6,  sh:0,  sr:0 },
 };
 
 // 軍編成: 各武将は強さ倍率(str)を持ち、攻撃・防御・射撃に掛かる
@@ -382,7 +382,7 @@ function placeUnits(playerArmy){
 // ── 経路・範囲 ──
 function mvRange(u){
   let r=UDATA[u.type].mv/2;  // 移動力は半減して適用
-  if(u.hp/u.maxHp < 0.3) r=Math.max(1,r-1); // 瀕死で移動力低下
+  if(u.hp < 300) r=Math.max(1,r-1); // 300人未満で移動力低下
   if(u.morale<40) r=Math.max(1,r-1);
   return r;
 }
@@ -600,6 +600,8 @@ function sndVictory(){
 
 function doAtk(att, def, isRanged, isCharge){
   playAtkSound(att, isRanged, isCharge);
+  const ft=performance.now()+1000;
+  att.flashUntil=ft; def.flashUntil=ft;
   const da=UDATA[att.type], dd=UDATA[def.type];
   const tDef=TDATA[terrain[def.gz][def.gx]];
   const tAtt=TDATA[terrain[att.gz][att.gx]];
@@ -625,7 +627,7 @@ function doAtk(att, def, isRanged, isCharge){
   const surround = adjEnemies>=5 ? 0.3 : adjEnemies>=4 ? 0.5 : adjEnemies>=3 ? 0.7 : 1.0;
   const defPow = dd.def * (def.str||1) * tDef.defM * decay * stance * surround;
 
-  const dmg = Math.max(2, Math.floor(atkPow - defPow*0.35));
+  const dmg = Math.max(25, Math.floor((atkPow - defPow*0.35)*20));
 
   def.hp    = Math.max(0, def.hp - dmg);
   def.morale= Math.max(0, def.morale - Math.floor(dmg*0.25));
@@ -641,7 +643,7 @@ function doAtk(att, def, isRanged, isCharge){
   log(`${att.cmd}→${def.cmd}: ${dmg}ダメージ${tagStr}`,'c');
   if(def.hp<=0){ log(`${def.cmd}の部隊、壊滅！`,'c'); sndDestroy(); }
   if(isCharge){
-    att.hp=Math.max(0,att.hp-8);
+    att.hp=Math.max(0,att.hp-160);
     log(`${att.cmd}は突撃の反動で8の損害`,'m');
     if(att.hp<=0){ log(`${att.cmd}の部隊、壊滅！`,'c'); sndDestroy(); }
   }
@@ -839,7 +841,7 @@ function updateUDisp(){
 <div class="sr"><span class="sl">部隊</span><span class="sv">${d.name}</span></div>
 <div class="sr"><span class="sl">武将</span><span class="sv">${u.cmd}</span></div>
 <div class="sr"><span class="sl">強さ</span><span class="sv">×${u.str}</span></div>
-<div class="sr"><span class="sl">兵力</span><span class="sv">${Math.round(975*u.hp/u.maxHp)}人 / ${Math.max(0,Math.round(39*u.hp/u.maxHp))}隊</span></div>
+<div class="sr"><span class="sl">兵力</span><span class="sv">${u.hp}人 / ${Math.max(0,Math.ceil(u.hp/25))}隊</span></div>
 <div class="sr"><span class="sl">HP</span><span class="sv">${hp}%</span></div>
 <div class="bar"><div class="bf" style="width:${hp}%;background:${hc}"></div></div>
 <div class="sr" style="margin-top:3px"><span class="sl">士気</span><span class="sv">${u.morale}</span></div>
@@ -996,10 +998,10 @@ function pointInTotsu(px, py){
   return inside;
 }
 const TOTSU_DOTS=(()=>{
-  const pts=[]; const step=0.218;
+  const pts=[]; const step=0.210;
   for(let r=-1.05;r<=1.05;r+=step) for(let f=-0.7;f<=0.78;f+=step)
     if(pointInTotsu(r,f)) pts.push([r,f]);
-  return pts;
+  return pts.slice(0,40); // 40粒 × 25人 = 1000人
 })();
 
 const TOTSU = [
@@ -1024,11 +1026,13 @@ function drawUnit(it){
   const fx=Math.sin(ang), fz=-Math.cos(ang);
   const rx=-fz, rz=fx;
 
-  // HPに応じてスケールと粒数を決定
+  // 兵数(=HP)に応じてスケールと粒数を決定
   const ratio=u.hp/u.maxHp;
-  const SC=0.6+ratio*1.0;  // 最小0.6→最大1.6
-  const dotCount=Math.max(1, Math.round(TOTSU_DOTS.length*ratio));
+  const SC=0.5+ratio*1.1;            // 最小0.5→最大1.6
+  const dotCount=Math.max(1, Math.ceil(u.hp/25));  // 1粒=25人
   const dotR=Math.max(1.5, SC*3.5);  // 粒サイズ
+  // 点滅判定
+  const flash=u.flashUntil&&performance.now()<u.flashUntil&&Math.floor(performance.now()/250)%2===0;
 
   // 粒を投影して描画
   for(let i=0;i<dotCount;i++){
@@ -1040,8 +1044,8 @@ function drawUnit(it){
     // 影（立体感）
     ctx.fillStyle='rgba(0,0,0,0.25)';
     ctx.beginPath(); ctx.arc(p.x+r*0.3, p.y+r*0.4, r*0.85, 0, Math.PI*2); ctx.fill();
-    // 本体
-    ctx.fillStyle=shade(body, 0.8+0.4*(1-i/dotCount));
+    // 本体（点滅中は白）
+    ctx.fillStyle=flash?'#fff':shade(body, 0.8+0.4*(1-i/dotCount));
     ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI*2); ctx.fill();
     if(sel2){
       ctx.strokeStyle='rgba(255,255,120,0.7)'; ctx.lineWidth=0.6;
